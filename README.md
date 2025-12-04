@@ -26,7 +26,7 @@
     Откройте терминал и выполните команду:
 
     ```bash
-    chmod +x drweb_cgp_setup
+    chmod +x drweb_squid_integration
     ```
 
 После этого скрипт готов к использованию.
