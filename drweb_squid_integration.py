@@ -313,7 +313,7 @@ def handle_setup(args, squid_config_dir: Path, version: str):
     """
     
     logger.header("\nНастройка Dr.Web для работы с прокси-сервером Squid...")
-    squid_socket = f"{args.icapd_host}:{args.icapd_port}"
+    squid_socket = f"{args.listen_host}:{args.listen_port}"
     run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', squid_socket])
     run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.Start', "Yes"])
     logger.success("[+] Dr.Web настроен.")
