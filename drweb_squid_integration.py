@@ -15,7 +15,8 @@ __version__ = "0.0.1"
 BLOCK_HEADER = "# --- BEGIN Dr.Web integration managed by script ---"
 BLOCK_FOOTER = "# --- END Dr.Web integration managed by script ---"
 
-
+SSL_BLOCK_HEADER = "# --- BEGIN SSL bump configuration managed by Dr.Web script ---"
+SSL_BLOCK_FOOTER = "# --- END SSL bump configuration managed by Dr.Web script ---"
 class AnsiColors:
     """
     Класс-хранилище для ANSI-кодов цветов.
@@ -167,7 +168,7 @@ def check_drweb_license():
         sys.exit(1)
 
 
-def check_squid_version(with_ssl:bool):
+def check_squid_version(args):
     """
     Проверяет версию Squid, используя существующую функцию run_shell_command.
     Также проверяет наличие флага --enable-icap-client при компиляции Squid.
@@ -194,11 +195,12 @@ def check_squid_version(with_ssl:bool):
     if "--enable-icap-client" not in output:
         logger.error("Ошибка: Установленная версия Squid была скомпилирона без флага --enable-icap-client.")
         sys.exit(1)
-    
-    if with_ssl:
-        if "--with-openssl" not in output or "--enable-ssl-crtd" not in output:
-            logger.error("Ошибка: Установленная версия Squid была скомпилирона без поддержки разбора HTTPS. Перекомпилируйте squid с флагами --with-openssl и --enable-ssl-crtd.")
-            sys.exit(1)         
+
+    if args.command == 'setup':
+        if args.with_ssl:
+            if "--with-openssl" not in output or "--enable-ssl-crtd" not in output:
+                logger.error("Ошибка: Установленная версия Squid была скомпилирона без поддержки разбора HTTPS. Перекомпилируйте squid с флагами --with-openssl и --enable-ssl-crtd.")
+                sys.exit(1)         
      
     return version
 
@@ -352,23 +354,18 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
     content = ""
     if filepath.exists():
         content = filepath.read_text(encoding='utf-8', errors='ignore')
-
-    if ssl_lines:
-        pattern = r"^http_port 3128.*$"
-        replacement = "http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert=/etc/squid/ssl/squid.pem tls-key=/etc/squid/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-        replacement += "\n"
-        content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+        
     # Регулярное выражение для поиска нашего блока (включая переносы строк)
-    block_pattern = re.compile(f"\\s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}\\s*?", re.DOTALL)
+    block_pattern = re.compile(f"s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}s*?", re.DOTALL)
 
     # Формируем новый блок
     new_block = f"{BLOCK_HEADER}\n"
     new_block += "\n".join(new_lines)
-    if ssl_lines:
-        new_block += "\n"
-        new_block += "\n".join(ssl_lines)
     new_block += f"\n{BLOCK_FOOTER}\n"
-
+    if ssl_lines:
+        new_block += f"\n{SSL_BLOCK_HEADER}\n"
+        new_block += "\n".join(ssl_lines)
+        new_block += f"\n{SSL_BLOCK_FOOTER}\n"
     # Если блок уже существует, заменяем его. Иначе добавляем в конец.
     if block_pattern.search(content):
         logger.debug("Найден существующий блок конфигурации. Заменяем его.")
@@ -379,6 +376,26 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
         if content and not content.endswith('\n'):
             content += '\n'
         final_content = content + "\n" + new_block
+
+    # if ssl_lines:
+    #     new_block = f"\n{SSL_BLOCK_HEADER}\n"
+    #     new_block += "\n".join(ssl_lines)
+    #     new_block += f"\n{SSL_BLOCK_FOOTER}\n"
+    #     re.compile(f"\\s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}\\s*?", re.DOTALL)
+    #     if block_pattern.search(final_content):
+    #         logger.debug("Найден существующий блок конфигурации. Заменяем его.")
+    #         final_content = block_pattern.sub(new_block, final_content)
+    #     else:
+    #         logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
+    #         # Убедимся, что перед нашим блоком есть перенос строки
+    #         if final_content and not final_content.endswith('\n'):
+    #             final_content += '\n'
+    #         final_content = final_content + "\n" + new_block
+    #     pattern = r"^http_port 3128.*$"
+    #     replacement = "http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert=/etc/squid/ssl/squid.pem tls-key=/etc/squid/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+    #     replacement += "\n"
+    #     final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
+
 
     filepath.write_text(final_content, encoding='utf-8')
     logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
@@ -427,6 +444,7 @@ def handle_setup(args, squid_config_dir: Path, version: str):
         raise FileNotFoundError(f"Основной файл конфигурации Squid не найден: {main_cf_path}")
 
     main_cf_lines = get_squid_conf_lines(args, version)
+    ssl_lines = None
     if args.with_ssl:
         generate_certificate(squid_config_dir)
         prepare_ssl_db()
@@ -524,7 +542,7 @@ def create_backup(filepath: Path):
         logger.warning(f"ПРЕДУПРЕЖДЕНИЕ: Не удалось создать резервную копию для '{filepath}': {e}")
 
 
-def remove_squid_config_block(filepath: Path):
+def remove_squid_config_block(filepath: Path, with_ssl:bool):
     """
     Безопасно удаляет блок конфигурации Dr.Web из файла Squid.
 
@@ -557,6 +575,24 @@ def remove_squid_config_block(filepath: Path):
         logger.info(f"[*] Блок конфигурации Dr.Web не найден в '{filepath.name}'. Действий не требуется.")
 
 
+    content = filepath.read_text(encoding='utf-8', errors='ignore')
+    if with_ssl:
+        block_pattern = re.compile(f"\\s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}\\s*?", re.DOTALL)
+        if block_pattern.search(content):
+            logger.debug("Найден блок конфигурации ssl_bump. Удаляем его.")
+            # Заменяем найденный блок на пустую строку
+            final_content = block_pattern.sub('', content).strip()
+            # Добавляем один перенос строки в конце, если файл не пустой
+            if content:
+                final_content += '\n'
+            filepath.write_text(final_content, encoding='utf-8')
+            logger.success(f"[+] Блок конфигурации ssl_bump успешно удален из '{filepath.name}'.")
+        else:
+            logger.info(f"[*] Блок конфигурации ssl_bump не найден в '{filepath.name}'. Действий не требуется.")
+    
+
+
+
 def handle_remove(args, squid_config_dir: Path):
     """
     Обрабатывает команду 'remove', удаляя конфигурацию Dr.Web.
@@ -574,7 +610,7 @@ def handle_remove(args, squid_config_dir: Path):
     # Удаление может затронуть оба файла, поэтому проверяем оба.
     main_cf_path = squid_config_dir / 'squid.conf'
 
-    remove_squid_config_block(main_cf_path)
+    remove_squid_config_block(main_cf_path, args.with_ssl)
 
     run_shell_command(['drweb-ctl', 'cfset', '-r', 'ICAPD.ListenAddress'])
 
@@ -606,6 +642,8 @@ def main():
     base_parser.add_argument('-l', '--log-file', default=None, help='Сохранять весь вывод в файл журнала.')
     base_parser.add_argument('-d', '--debug', action='store_true', help='Включить подробный отладочный вывод.')
     base_parser.add_argument('--no-color', action='store_true', help='Отключить цветной вывод.')
+    base_parser.add_argument('--with-ssl', dest="with_ssl", default=False, action='store_true',
+                               help='Провести настройку squid для разбора HTTPS трафика.')
 
     interactive_parser = argparse.ArgumentParser(add_help=False)
     interactive_parser.add_argument('-y', '--yes', action='store_true',
@@ -614,13 +652,10 @@ def main():
     # --- Суб-парсер для команды 'setup' ---
     parser_icapd = subparsers.add_parser('setup', parents=[base_parser],
                                           help='Настройка интеграции через ICAPD.')
-    parser_icapd.add_argument('--listen-host', default='127.0.0.1',
+    parser_icapd.add_argument('--listen-host', dest="listen_host", default='127.0.0.1',
                                help='Хост для ICAPD-сокета (по умолч.: 127.0.0.1).')
-    parser_icapd.add_argument('--listen-port', default=1344, type=int,
+    parser_icapd.add_argument('--listen-port', dest="listen_port", default=1344, type=int,
                                help='Порт для ICAPD-сокета (по умолч.: 1344).')
-    parser_icapd.add_argument('--with_ssl', default=False, action='store_true',
-                               help='Провести настройку squid для разбора HTTPS трафика.')
-
 
     # --- Суб-парсер для команды 'remove' ---
     subparsers.add_parser('remove', parents=[base_parser, interactive_parser],
@@ -633,7 +668,7 @@ def main():
         check_drweb_license()
         check_drweb_standalone_mode()
         squid_config_dir = find_squid_config_dir(args)
-        version = check_squid_version(args.with_ssl)
+        version = check_squid_version(args)
         # Вызов соответствующего обработчика
         if args.command == 'setup':
             handle_setup(args, squid_config_dir, version)
