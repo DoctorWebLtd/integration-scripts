@@ -162,6 +162,7 @@ def check_drweb_standalone_mode():
 
 
 def check_drweb_license():
+    """Проверка наличия лицензии Dr.Web"""
     output = run_shell_command(['drweb-ctl', 'license'])
     if "no license" in output.lower():
         logger.error("Отсутствует лицензия Dr.Web. Активируйте продукт Dr.Web и попробуйте снова.")
