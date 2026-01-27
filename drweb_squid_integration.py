@@ -272,65 +272,9 @@ def check_squid_syntax():
         raise e
 
 
-def update_squid_config_file(filepath: Path, new_lines: list):
-    """
-    Безопасно обновляет конфигурационный файл Squid.
-
-    Функция находит и заменяет ранее созданный блок конфигурации,
-    обрамленный маркерами. Если блок не найден, он добавляется в конец файла.
-
-    :param filepath: Путь к файлу `squid.conf`.
-    :param new_lines: Список строк для вставки в управляемый блок.
-    """
-    logger.debug(f"Обновление файла '{filepath}'...")
-    create_backup(filepath)
-
-    content = ""
-    if filepath.exists():
-        content = filepath.read_text(encoding='utf-8', errors='ignore')
-
-    # Регулярное выражение для поиска нашего блока (включая переносы строк)
-    block_pattern = re.compile(f"\\s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}\\s*?", re.DOTALL)
-
-    # Формируем новый блок
-    new_block = f"{BLOCK_HEADER}\n"
-    new_block += "\n".join(new_lines)
-    new_block += f"\n{BLOCK_FOOTER}\n"
-
-    # Если блок уже существует, заменяем его. Иначе добавляем в конец.
-    if block_pattern.search(content):
-        logger.debug("Найден существующий блок конфигурации. Заменяем его.")
-        final_content = block_pattern.sub(new_block, content)
-    else:
-        logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
-        # Убедимся, что перед нашим блоком есть перенос строки
-        if content and not content.endswith('\n'):
-            content += '\n'
-        final_content = content + "\n" + new_block
-
-    filepath.write_text(final_content, encoding='utf-8')
-    logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
-
-
-def handle_setup(args, squid_config_dir: Path, version: str):
-    """
-    Обрабатывает команду 'setup'.
-
-    :param args: Объект с аргументами командной строки.
-    :param squid_config_dir: Путь к директории конфигурации Squid.
-    """
-    
-    logger.header("\nНастройка Dr.Web для работы с прокси-сервером Squid...")
+def get_squid_conf_lines(args, version):
     squid_socket = f"{args.listen_host}:{args.listen_port}"
-    run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', squid_socket])
-    run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.Start', "Yes"])
-    logger.success("[+] Dr.Web настроен.")
-
-    logger.header("\nНастройка Squid (squid.conf)...")
-    main_cf_path = squid_config_dir / 'squid.conf'
-    if not main_cf_path.exists():
-        raise FileNotFoundError(f"Основной файл конфигурации Squid не найден: {main_cf_path}")
-
+    
     main_cf_lines_v3_2 = [
         "icap_enable on",
         f"icap_service i_req reqmod_precache bypass=0 icap://{squid_socket}/reqmod",
@@ -343,7 +287,6 @@ def handle_setup(args, squid_config_dir: Path, version: str):
         "adaptation_send_username on",
         "icap_persistent_connections on"
     ]
-
     main_cf_lines_v3_1 = [
         "icap_enable on",
         f"icap_service i_req reqmod_precache bypass=0 icap://{squid_socket}/reqmod",
@@ -356,7 +299,6 @@ def handle_setup(args, squid_config_dir: Path, version: str):
         "icap_send_client_username on",
         "icap_persistent_connections on"
     ]
-
     main_cf_lines_v3_0 = [
         "icap_enable on",
         f"icap_service i_req reqmod_precache 0 icap://{squid_socket}/reqmod",
@@ -383,9 +325,97 @@ def handle_setup(args, squid_config_dir: Path, version: str):
     else:
         main_cf_lines = main_cf_lines_v3_2
         logger.info("Squid версии 3.2 или выше обнаружен.")
+    
+    return main_cf_lines
 
-    update_squid_config_file(main_cf_path, main_cf_lines)
 
+def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
+    """
+    Безопасно обновляет конфигурационный файл Squid.
+
+    Функция находит и заменяет ранее созданный блок конфигурации,
+    обрамленный маркерами. Если блок не найден, он добавляется в конец файла.
+
+    :param filepath: Путь к файлу `squid.conf`.
+    :param new_lines: Список строк для вставки в управляемый блок.
+    """
+    logger.debug(f"Обновление файла '{filepath}'...")
+    create_backup(filepath)
+
+    content = ""
+    if filepath.exists():
+        content = filepath.read_text(encoding='utf-8', errors='ignore')
+
+    # Регулярное выражение для поиска нашего блока (включая переносы строк)
+    block_pattern = re.compile(f"\\s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}\\s*?", re.DOTALL)
+
+    # Формируем новый блок
+    new_block = f"{BLOCK_HEADER}\n"
+    new_block += "\n".join(new_lines)
+    if ssl_lines:
+        new_block += "\n".join(ssl_lines)
+    new_block += f"\n{BLOCK_FOOTER}\n"
+
+    # Если блок уже существует, заменяем его. Иначе добавляем в конец.
+    if block_pattern.search(content):
+        logger.debug("Найден существующий блок конфигурации. Заменяем его.")
+        final_content = block_pattern.sub(new_block, content)
+    else:
+        logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
+        # Убедимся, что перед нашим блоком есть перенос строки
+        if content and not content.endswith('\n'):
+            content += '\n'
+        final_content = content + "\n" + new_block
+
+    filepath.write_text(final_content, encoding='utf-8')
+    logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
+
+
+def get_ssl_lines():
+    try:
+        if os.path.isfile("/usr/sbin/ssl_crtd"):
+            cmd = "/usr/sbin/ssl_crtd"
+        elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
+            cmd = "/usr/lib/squid/security_file_certgen"
+        elif os.path.isfile("/usr/lib/squid/ssl_crtd"):
+            cmd = "/usr/lib/squid/ssl_crtd"
+        elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
+            cmd = "/usr/lib64/squid/ssl_crtd"
+
+        ssl_lines = [f"sslcrtd_program {cmd} -s /var/lib/squid/ssl_db -M 20MB",
+                    "sslproxy_cert_error allow all",
+                    "ssl_bump stare all"]
+        return ssl_lines
+    except:
+        logger.warning("Не получилось определить необходимый конфиг для ssl-bump.")
+        return
+
+
+def handle_setup(args, squid_config_dir: Path, version: str):
+    """
+    Обрабатывает команду 'setup'.
+
+    :param args: Объект с аргументами командной строки.
+    :param squid_config_dir: Путь к директории конфигурации Squid.
+    """
+    
+    logger.header("\nНастройка Dr.Web для работы с прокси-сервером Squid...")
+    squid_socket = f"{args.listen_host}:{args.listen_port}"
+    run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', squid_socket])
+    run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.Start', "Yes"])
+    logger.success("[+] Dr.Web настроен.")
+
+    logger.header("\nНастройка Squid (squid.conf)...")
+    main_cf_path = squid_config_dir / 'squid.conf'
+    if not main_cf_path.exists():
+        raise FileNotFoundError(f"Основной файл конфигурации Squid не найден: {main_cf_path}")
+
+    main_cf_lines = get_squid_conf_lines(args, version)
+    if args.with_ssl:
+        generate_certificate()
+        prepare_ssl_db()
+        ssl_lines = get_ssl_lines(args, version)
+    update_squid_config_file(main_cf_path, main_cf_lines, ssl_lines)
 
 
 def add_certificate_to_trusted(cert_path: Path):
@@ -406,6 +436,7 @@ def add_certificate_to_trusted(cert_path: Path):
     except Exception:
         logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
         return
+
 
 def generate_certificate(squid_dir_path: Path):
     """
@@ -433,6 +464,10 @@ def prepare_ssl_db():
             cmd = "/usr/sbin/ssl_crtd"
         elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
             cmd = "/usr/lib/squid/security_file_certgen"
+        elif os.path.isfile("/usr/lib/squid/ssl_crtd"):
+            cmd = "/usr/lib/squid/ssl_crtd"
+        elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
+            cmd = "/usr/lib64/squid/ssl_crtd"
         run_shell_command(["mkdir", "-p", "/var/lib/squid"])
         run_shell_command(["rm", "-rf", "/var/lib/squid/ssl_db"])
         run_shell_command([cmd, "-c", "-s", "/var/lib/squid/ssl_db", "-M", "20MB"])
