@@ -1,4 +1,5 @@
 import argparse
+import sys
 import os
 import re
 import shutil
@@ -6,6 +7,8 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+
 
 __version__ = "0.0.1"
 
@@ -157,7 +160,7 @@ def check_drweb_standalone_mode():
     logger.debug("Проверка режима Dr.Web: обнаружен автономный (standalone) режим. Продолжение работы.")
 
 
-def check_squid_version():
+def check_squid_version(with_ssl:bool):
     """
     Проверяет версию Squid, используя существующую функцию run_shell_command.
     Также проверяет наличие флага --enable-icap-client при компиляции Squid.
@@ -185,6 +188,11 @@ def check_squid_version():
         logger.error("Ошибка: Установленная версия Squid была скомпилирона без флага --enable-icap-client.")
         sys.exit(1)
     
+    if with_ssl:
+        if "--with-openssl" not in output or "--enable-ssl-crtd" not in output:
+            logger.error("Ошибка: Установленная версия Squid была скомпилирона без поддержки разбора HTTPS.")
+            sys.exit(1)         
+     
     return version
 
 
@@ -379,6 +387,61 @@ def handle_setup(args, squid_config_dir: Path, version: str):
     update_squid_config_file(main_cf_path, main_cf_lines)
 
 
+
+def add_certificate_to_trusted(cert_path: Path):
+    try:
+        output = run_shell_command(["uname", "-a"]).lower()
+        if any(os in output for os in ["debian", "ubuntu", "astra", "mint"]):
+            run_shell_command(["cp", cert_path, "/etc/ssl/certs/"])
+            run_shell_command(["c_rehash"])
+        elif any(os in output for os in ["centos", "fedora"]):
+            run_shell_command(["cp", cert_path, "/etc/pki/ca-trust/source/anchors/"])
+            run_shell_command["update-ca-trust", "extract"]
+        elif "freebsd" in output:
+            run_shell_command(["mkdir", "-p", "/usr/local/etc/ssl/certs/"])
+            run_shell_command(["cp", cert_path, "/usr/local/etc/ssl/certs/"])
+            run_shell_command(["certctl", "rehash"])
+        else:
+            raise Exception
+    except Exception:
+        logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
+        return
+
+def generate_certificate(squid_dir_path: Path):
+    """
+    Создает самоподписанный SSL сертификат и добавляет его в список доверенных.
+
+    :param filepath: путь к директории squid
+    :type filepath: Path
+    """
+    try:
+        #Create certificate
+        ssl_dir_path = squid_dir_path / "ssl"
+        os.mkdir(ssl_dir_path)
+        cert_path = ssl_dir_path / "squid.pem"
+        run_shell_command(["openssl", "req", "-new", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes", "-x509", "-extensions", "v3_ca", "-keyout", cert_path, "-out", cert_path, "-subj", "/C=RU/ST=SPB/L=SPB/O=Dr.Web/OU=IT/CN=proxy.drweb.com"])
+        #Add certificate to trusted
+        add_certificate_to_trusted(cert_path)
+    except Exception:
+        logger.warning(f"Не получилось создать SSL-сертификат. Пожалуйста сделайте это самостоятельно и разместите его по пути {cert_path}")
+        return
+
+
+def prepare_ssl_db():
+    try:
+        if os.path.isfile("/usr/sbin/ssl_crtd"):
+            cmd = "/usr/sbin/ssl_crtd"
+        elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
+            cmd = "/usr/lib/squid/security_file_certgen"
+        run_shell_command(["mkdir", "-p", "/var/lib/squid"])
+        run_shell_command(["rm", "-rf", "/var/lib/squid/ssl_db"])
+        run_shell_command([cmd, "-c", "-s", "/var/lib/squid/ssl_db", "-M", "20MB"])
+        run_shell_command(["chown", "-R", "proxy:proxy", "/var/lib/squid"])
+    except:
+        logger.warning(f"Не получилось подготовить базу данных SSL сертификатов. Пожалуйста подготовьте ее самостоятельно.")
+        return
+    
+
 def create_backup(filepath: Path):
     """
     Создает резервную копию файла с меткой времени.
@@ -491,6 +554,8 @@ def main():
                                help='Хост для ICAPD-сокета (по умолч.: 127.0.0.1).')
     parser_icapd.add_argument('--listen-port', default=1344, type=int,
                                help='Порт для ICAPD-сокета (по умолч.: 1344).')
+    parser_icapd.add_argument('--with_ssl', default=False, action='store_true',
+                               help='Провести настройку squid для разбора HTTPS трафика.')
 
 
     # --- Суб-парсер для команды 'remove' ---
@@ -503,7 +568,7 @@ def main():
         check_root()
         check_drweb_standalone_mode()
         squid_config_dir = find_squid_config_dir(args)
-        version = check_squid_version()
+        version = check_squid_version(args.with_ssl)
         # Вызов соответствующего обработчика
         if args.command == 'setup':
             handle_setup(args, squid_config_dir, version)
