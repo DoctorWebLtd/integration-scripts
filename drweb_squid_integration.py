@@ -160,6 +160,13 @@ def check_drweb_standalone_mode():
     logger.debug("Проверка режима Dr.Web: обнаружен автономный (standalone) режим. Продолжение работы.")
 
 
+def check_drweb_license():
+    output = run_shell_command(['drweb-ctl', 'license'])
+    if "no license" in output.lower():
+        logger.error("Отсутствует лицензия Dr.Web. Активируйте продукт Dr.Web и попробуйте снова.")
+        sys.exit(1)
+
+
 def check_squid_version(with_ssl:bool):
     """
     Проверяет версию Squid, используя существующую функцию run_shell_command.
@@ -190,7 +197,7 @@ def check_squid_version(with_ssl:bool):
     
     if with_ssl:
         if "--with-openssl" not in output or "--enable-ssl-crtd" not in output:
-            logger.error("Ошибка: Установленная версия Squid была скомпилирона без поддержки разбора HTTPS.")
+            logger.error("Ошибка: Установленная версия Squid была скомпилирона без поддержки разбора HTTPS. Перекомпилируйте squid с флагами --with-openssl и --enable-ssl-crtd.")
             sys.exit(1)         
      
     return version
@@ -346,6 +353,11 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
     if filepath.exists():
         content = filepath.read_text(encoding='utf-8', errors='ignore')
 
+    if ssl_lines:
+        pattern = r"^http_port 3128.*$"
+        replacement = "http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert=/etc/squid/ssl/squid.pem tls-key=/etc/squid/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+        replacement += "\n"
+        content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
     # Регулярное выражение для поиска нашего блока (включая переносы строк)
     block_pattern = re.compile(f"\\s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}\\s*?", re.DOTALL)
 
@@ -353,6 +365,7 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
     new_block = f"{BLOCK_HEADER}\n"
     new_block += "\n".join(new_lines)
     if ssl_lines:
+        new_block += "\n"
         new_block += "\n".join(ssl_lines)
     new_block += f"\n{BLOCK_FOOTER}\n"
 
@@ -372,6 +385,9 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
 
 
 def get_ssl_lines():
+    """
+    Создает строки конфига squid для работы ssl_bump.
+    """
     try:
         if os.path.isfile("/usr/sbin/ssl_crtd"):
             cmd = "/usr/sbin/ssl_crtd"
@@ -412,27 +428,37 @@ def handle_setup(args, squid_config_dir: Path, version: str):
 
     main_cf_lines = get_squid_conf_lines(args, version)
     if args.with_ssl:
-        generate_certificate()
+        generate_certificate(squid_config_dir)
         prepare_ssl_db()
-        ssl_lines = get_ssl_lines(args, version)
+        ssl_lines = get_ssl_lines()
     update_squid_config_file(main_cf_path, main_cf_lines, ssl_lines)
 
 
 def add_certificate_to_trusted(cert_path: Path):
+    """
+    Добавляет SSL сертификат с список доверенных сертификатов
+    
+    :param cert_path: Описание
+    :type cert_path: Path
+    """
     try:
         output = run_shell_command(["uname", "-a"]).lower()
-        if any(os in output for os in ["debian", "ubuntu", "astra", "mint"]):
-            run_shell_command(["cp", cert_path, "/etc/ssl/certs/"])
-            run_shell_command(["c_rehash"])
-        elif any(os in output for os in ["centos", "fedora"]):
-            run_shell_command(["cp", cert_path, "/etc/pki/ca-trust/source/anchors/"])
-            run_shell_command["update-ca-trust", "extract"]
-        elif "freebsd" in output:
+        for os_type in ["debian", "ubuntu", "astra", "mint"]:
+            if os_type in output:
+                run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
+                run_shell_command(["c_rehash"])              
+                return
+        for os_type in ["centos", "fedora", "red", "rhel"]:
+            if os_type in output:
+                run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
+                run_shell_command(["c_rehash"])
+                return     
+        if "freebsd" in output:
             run_shell_command(["mkdir", "-p", "/usr/local/etc/ssl/certs/"])
-            run_shell_command(["cp", cert_path, "/usr/local/etc/ssl/certs/"])
+            run_shell_command(["cp", str(cert_path), "/usr/local/etc/ssl/certs/"])
             run_shell_command(["certctl", "rehash"])
-        else:
-            raise Exception
+            return
+        logger.info("not found")
     except Exception:
         logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
         return
@@ -448,17 +474,20 @@ def generate_certificate(squid_dir_path: Path):
     try:
         #Create certificate
         ssl_dir_path = squid_dir_path / "ssl"
-        os.mkdir(ssl_dir_path)
+        run_shell_command(["mkdir", "-p", str(ssl_dir_path)])
         cert_path = ssl_dir_path / "squid.pem"
-        run_shell_command(["openssl", "req", "-new", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes", "-x509", "-extensions", "v3_ca", "-keyout", cert_path, "-out", cert_path, "-subj", "/C=RU/ST=SPB/L=SPB/O=Dr.Web/OU=IT/CN=proxy.drweb.com"])
+        run_shell_command(["openssl", "req", "-new", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes", "-x509", "-extensions", "v3_ca", "-keyout", str(ssl_dir_path / "squid.key"), "-out", str(cert_path), "-subj", "/C=RU/ST=SPB/L=SPB/O=Dr.Web/OU=IT/CN=proxy.drweb.com"])
         #Add certificate to trusted
         add_certificate_to_trusted(cert_path)
     except Exception:
-        logger.warning(f"Не получилось создать SSL-сертификат. Пожалуйста сделайте это самостоятельно и разместите его по пути {cert_path}")
+        logger.warning(f"Не получилось создать SSL-сертификат. Пожалуйста сделайте это самостоятельно.")
         return
 
 
 def prepare_ssl_db():
+    """
+    Создает базу данных SSL сертификатов для работы squid 
+    """
     try:
         if os.path.isfile("/usr/sbin/ssl_crtd"):
             cmd = "/usr/sbin/ssl_crtd"
@@ -601,6 +630,7 @@ def main():
     logger.reconfigure(debug_mode=args.debug, color_enabled=not args.no_color, log_file=args.log_file)
     try:
         check_root()
+        check_drweb_license()
         check_drweb_standalone_mode()
         squid_config_dir = find_squid_config_dir(args)
         version = check_squid_version(args.with_ssl)
