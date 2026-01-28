@@ -54,6 +54,12 @@
   sudo ./drweb_squid_integration setup
 ```
 
+Настройка интеграции Dr.Web ICAPD c прокси-сервером Squid с настройкой разбора HTTPS трафика.
+
+```bash
+  sudo ./drweb_squid_integration setup --with-ssl
+```
+
 Вы также можете указать нестандартный сокет:
 
 ```bash
@@ -87,7 +93,7 @@
 Удаление ранее сделанных настроек, в том числе расшифровку HTTPS трафика".
 
 ```bash
-  sudo ./%(prog)s remove --with-ssl"
+  sudo ./%(prog)s remove --with-ssl
 ```
 
 Для автоматического выполнения без запроса подтверждения добавьте флаг `-y`:
