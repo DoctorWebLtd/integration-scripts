@@ -415,7 +415,8 @@ def get_ssl_lines():
             cmd = "/usr/lib/squid/ssl_crtd"
         elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
             cmd = "/usr/lib64/squid/ssl_crtd"
-
+        elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
+            cmd = "/usr/local/libexec/squid/security_file_certgen"
         ssl_lines = [f"sslcrtd_program {cmd} -s /var/lib/squid/ssl_db -M 20MB",
                     "sslproxy_cert_error allow all",
                     "ssl_bump stare all"]
@@ -516,11 +517,13 @@ def prepare_ssl_db():
             cmd = "/usr/lib/squid/ssl_crtd"
         elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
             cmd = "/usr/lib64/squid/ssl_crtd"
+        elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
+            cmd = "/usr/local/libexec/squid/security_file_certgen"
         run_shell_command(["mkdir", "-p", "/var/lib/squid"])
         run_shell_command(["rm", "-rf", "/var/lib/squid/ssl_db"])
         run_shell_command([cmd, "-c", "-s", "/var/lib/squid/ssl_db", "-M", "20MB"])
         run_shell_command(["chown", "-R", "proxy:proxy", "/var/lib/squid"])
-    except:
+    except Exception:
         logger.warning(f"Не получилось подготовить базу данных SSL сертификатов. Пожалуйста подготовьте ее самостоятельно.")
         return
     
@@ -683,11 +686,17 @@ def main():
 
         logger.header("\nПроверка конфигурации и перезапуск сервисов...")
         check_squid_syntax()
-        run_shell_command(['systemctl', 'restart', 'squid'], title="Перезапуск Squid")
+        if "freebsd" in run_shell_command(["uname", "-a"]).lower():
+            run_shell_command(["service", "squid", "restart"], title="Перезапуск Squid")
+        else:
+            run_shell_command(['systemctl', 'restart', 'squid'], title="Перезапуск Squid")
 
         # Перезапускаем Dr.Web только при настройке, а не при удалении
         if args.command.startswith('setup'):
-            run_shell_command(['systemctl', 'restart', 'drweb-configd'], title="Перезапуск Dr.Web ConfigD")
+            if "freebsd" in run_shell_command(["uname", "-a"]).lower():
+                run_shell_command(["service", "drweb-configd", "restart"], title="Перезапуск Dr.Web ConfigD")
+            else:
+                run_shell_command(['systemctl', 'restart', 'drweb-configd'], title="Перезапуск Dr.Web ConfigD")
 
         logger.success("\n[+] Сервисы успешно перезапущены.")
         logger.info("\nОперация успешно завершена.")
