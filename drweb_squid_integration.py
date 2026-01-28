@@ -621,17 +621,22 @@ def main():
     Главная функция: парсинг аргументов и вызов обработчиков.
     """
     parser = argparse.ArgumentParser(
-        description=f"Скрипт для интеграции Dr.Web с Squid. Версия {__version__}.",
+        description=f"Скрипт для интеграции Dr.Web и Squid. Версия {__version__}.",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="Примеры использования:\n"
-               "  # Настройка интеграции Dr. Web с Squid со значениями по умолчанию:\n"
+               "  # Настройка интеграции Dr.Web и Squid со значениями по умолчанию:\n"
                "  sudo ./%(prog)s setup\n\n"
+               "  # Настройка интеграции Dr.Web и Squid с разбором HTTPS трафика"
+               "  sudo ./%(prog)s setup --with-ssl"
                "  # Настройка с указанием хоста и порта Dr.Web:\n"
                "  sudo ./%(prog)s setup --icapd-port 1345 --icapd-host 127.0.0.1\n\n"
                "  # Удаление ранее сделанных настроек с автоматическим подтверждением:\n"
                "  sudo ./%(prog)s remove -y\n\n"
+               "  # Удаление ранее сделанных настроек, в том числе расшифровку HTTPS трафика"
+               "  sudo ./%(prog)s remove --with-ssl"
                "  # Запустить настройку с записью всего вывода в лог-файл:\n"
                "  sudo ./%(prog)s setup -l /var/log/drweb_squid_setup.log"
+               
     )
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     subparsers = parser.add_subparsers(dest='command', required=True, help='Доступные команды')
