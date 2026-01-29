@@ -378,24 +378,10 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
             content += '\n'
         final_content = content + "\n" + new_block
 
-    # if ssl_lines:
-    #     new_block = f"\n{SSL_BLOCK_HEADER}\n"
-    #     new_block += "\n".join(ssl_lines)
-    #     new_block += f"\n{SSL_BLOCK_FOOTER}\n"
-    #     re.compile(f"\\s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}\\s*?", re.DOTALL)
-    #     if block_pattern.search(final_content):
-    #         logger.debug("Найден существующий блок конфигурации. Заменяем его.")
-    #         final_content = block_pattern.sub(new_block, final_content)
-    #     else:
-    #         logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
-    #         # Убедимся, что перед нашим блоком есть перенос строки
-    #         if final_content and not final_content.endswith('\n'):
-    #             final_content += '\n'
-    #         final_content = final_content + "\n" + new_block
-    #     pattern = r"^http_port 3128.*$"
-    #     replacement = "http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert=/etc/squid/ssl/squid.pem tls-key=/etc/squid/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-    #     replacement += "\n"
-    #     final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
+    pattern = r"^http_port 3128.*$"
+    replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath)}/ssl/squid.pem tls-key={str(filepath)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+    replacement += "\n"
+    final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
 
 
     filepath.write_text(final_content, encoding='utf-8')
