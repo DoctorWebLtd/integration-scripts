@@ -567,7 +567,7 @@ def remove_squid_config_block(filepath: Path, with_ssl:bool):
 
     # Регулярное выражение для поиска нашего блока (включая окружающие пробелы и переносы)
     block_pattern = re.compile(f"\\s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}\\s*?", re.DOTALL)
-
+    final_content = ""
     if block_pattern.search(content):
         logger.debug("Найден блок конфигурации. Удаляем его.")
         # Заменяем найденный блок на пустую строку
@@ -580,9 +580,9 @@ def remove_squid_config_block(filepath: Path, with_ssl:bool):
         logger.info(f"[*] Блок конфигурации Dr.Web не найден в '{filepath.name}'. Действий не требуется.")
 
 
-    content = final_content
     if with_ssl:
-        content = final_content
+        if final_content:
+            content = final_content
         block_pattern = re.compile(f"\\s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}\\s*?", re.DOTALL)
         if block_pattern.search(content):
             logger.debug("Найден блок конфигурации ssl_bump. Удаляем его.")
@@ -601,8 +601,9 @@ def remove_squid_config_block(filepath: Path, with_ssl:bool):
         else:
             logger.info(f"[*] Блок конфигурации ssl_bump не найден в '{filepath.name}'. Действий не требуется.")
     
-    filepath.write_text(final_content, encoding='utf-8')
-
+    if final_content:
+        filepath.write_text(final_content, encoding='utf-8')
+    return
 
 def handle_remove(args, squid_config_dir: Path):
     """
@@ -707,6 +708,8 @@ def main():
 
         logger.success("\n[+] Сервисы успешно перезапущены.")
         logger.info("\nОперация успешно завершена.")
+        if args.with_ssl and args.command == "setup":
+            logger.info(f"\nВы можете найти SSL сертификат по следующем пути: {str(squid_config_dir)}/ssl/squid.pem")
 
     except (RuntimeError, IOError, ValueError, FileNotFoundError, PermissionError) as e:
         logger.error(f"\nКРИТИЧЕСКАЯ ОШИБКА: {e}", to_stderr=True)
