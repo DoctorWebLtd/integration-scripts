@@ -378,7 +378,7 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
             content += '\n'
         final_content = content + "\n" + new_block
     
-    if ssl_block:
+    if ssl_lines:
         block_pattern = re.compile(f"s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}s*?", re.DOTALL)
         if block_pattern.search(final_content):
             logger.debug("Найден существующий блок конфигурации ssl_bump. Заменяем его.")
@@ -409,6 +409,8 @@ def get_ssl_lines():
             cmd = "/usr/sbin/ssl_crtd"
         elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
             cmd = "/usr/lib/squid/security_file_certgen"
+        elif os.path.isfile("/usr/lib64/squid/security_file_certgen"):
+            cmd = "/usr/lib64/squid/security_file_certgen"
         elif os.path.isfile("/usr/lib/squid/ssl_crtd"):
             cmd = "/usr/lib/squid/ssl_crtd"
         elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
@@ -511,6 +513,8 @@ def prepare_ssl_db():
             cmd = "/usr/sbin/ssl_crtd"
         elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
             cmd = "/usr/lib/squid/security_file_certgen"
+        elif os.path.isfile("/usr/lib64/squid/security_file_certgen"):
+            cmd = "/usr/lib64/squid/security_file_certgen"
         elif os.path.isfile("/usr/lib/squid/ssl_crtd"):
             cmd = "/usr/lib/squid/ssl_crtd"
         elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
