@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 
-__version__ = "0.0.1"
+__version__ = "1.0.0"
 
 BLOCK_HEADER = "# --- BEGIN Dr.Web integration managed by script ---"
 BLOCK_FOOTER = "# --- END Dr.Web integration managed by script ---"
@@ -635,25 +635,45 @@ def main():
     parser = argparse.ArgumentParser(
         description=f"Скрипт для интеграции Dr.Web и Squid. Версия {__version__}.",
         formatter_class=argparse.RawTextHelpFormatter,
-        epilog="Примеры использования:\n"
-               "  # Настройка интеграции Dr.Web и Squid со значениями по умолчанию:\n"
-               "  sudo ./%(prog)s setup\n\n"
-               "  # Настройка интеграции Dr.Web и Squid с разбором HTTPS трафика"
-               "  sudo ./%(prog)s setup --with-ssl"
-               "  # Настройка с указанием хоста и порта Dr.Web:\n"
-               "  sudo ./%(prog)s setup --icapd-port 1345 --icapd-host 127.0.0.1\n\n"
-               "  # Удаление ранее сделанных настроек с автоматическим подтверждением:\n"
-               "  sudo ./%(prog)s remove -y\n\n"
-               "  # Удаление ранее сделанных настроек, в том числе расшифровку HTTPS трафика"
-               "  sudo ./%(prog)s remove --with-ssl"
-               "  # Запустить настройку с записью всего вывода в лог-файл:\n"
-               "  sudo ./%(prog)s setup -l /var/log/drweb_squid_setup.log"
+        epilog= "Параметры:\n"
+                "  -squid-config-dir Явно указать путь к директории конфигурации Squid\n"
+                "  --listen-host     Хост для ICAPD-сокета (по умолч.: 127.0.0.1)\n"
+                "  --listen-port     Порт для ICAPD-сокета (по умолч.: 1344)\n"
+                "  --with-ssl        Провести настройку squid для разбора HTTPS трафика\n"
+                "  -l, --log-file    Сохранять весь вывод в файл журнала\n"
+                "  -d, --debug       Включить подробный отладочный вывод\n"
+                "  --no-color        Отключить цветной вывод\n"
+                "  -y, --yes         Пропустить интерактивные запросы подтверждения\n"
+                "Примеры использования:\n"
+                "  # Настройка интеграции Dr.Web и Squid со значениями по умолчанию:\n"
+                "  sudo ./%(prog)s setup\n\n"
+                "  # Настройка интеграции Dr.Web и Squid с разбором HTTPS трафика\n"
+                "  sudo ./%(prog)s setup --with-ssl\n\n"
+                "  # Настройка с указанием хоста и порта Dr.Web:\n"
+                "  sudo ./%(prog)s setup --icapd-port 1345 --icapd-host 127.0.0.1\n\n"
+                "  # Удаление ранее сделанных настроек с автоматическим подтверждением:\n"
+                "  sudo ./%(prog)s remove -y\n\n"
+                "  # Удаление ранее сделанных настроек, в том числе расшифровку HTTPS трафика\n"
+                "  sudo ./%(prog)s remove --with-ssl\n\n"
+                "  # Запустить настройку с записью всего вывода в лог-файл:\n"
+                "  sudo ./%(prog)s setup -l /var/log/drweb_squid_setup.log\n\n"
+
     )
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     subparsers = parser.add_subparsers(dest='command', required=True, help='Доступные команды')
 
     # --- Родительские парсеры для общих опций ---
-    base_parser = argparse.ArgumentParser(add_help=False)
+    base_parser = argparse.ArgumentParser(add_help=False, 
+                                          epilog="Параметры:\n"
+                                                 "-squid-config-dir Явно указать путь к директории конфигурации Squid"
+                                                 "--listen-host     Хост для ICAPD-сокета (по умолч.: 127.0.0.1)"
+                                                 "--listen-port     Порт для ICAPD-сокета (по умолч.: 1344)"
+                                                 "--with-ssl        Провести настройку squid для разбора HTTPS трафика"
+                                                 "-l, --log-file    Сохранять весь вывод в файл журнала"
+                                                 "-d, --debug       Включить подробный отладочный вывод"
+                                                 "--no-color        Отключить цветной вывод"
+                                                 "-y, --yes         Пропустить интерактивные запросы подтверждения"
+                                                 )
     base_parser.add_argument('--squid-config-dir', type=str,
                              help='Явно указать путь к директории конфигурации Squid (например, /etc/squid).')
     base_parser.add_argument('-l', '--log-file', default=None, help='Сохранять весь вывод в файл журнала.')
