@@ -478,7 +478,6 @@ def add_certificate_to_trusted(cert_path: Path):
             run_shell_command(["cp", str(cert_path), "/usr/local/etc/ssl/certs/"])
             run_shell_command(["certctl", "rehash"])
             return
-        logger.info("not found")
     except Exception:
         logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
         return
@@ -498,7 +497,9 @@ def generate_certificate(squid_dir_path: Path):
         cert_path = ssl_dir_path / "squid.pem"
         run_shell_command(["openssl", "req", "-new", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes", "-x509", "-extensions", "v3_ca", "-keyout", str(ssl_dir_path / "squid.key"), "-out", str(cert_path), "-subj", "/C=RU/ST=SPB/L=SPB/O=Dr.Web/OU=IT/CN=proxy.drweb.com"])
         #Add certificate to trusted
+        run_shell_command(["chmod", "-R", "+r", str(ssl_dir_path)])
         add_certificate_to_trusted(cert_path)
+        
     except Exception:
         logger.warning(f"Не получилось создать SSL-сертификат. Пожалуйста сделайте это самостоятельно.")
         return
@@ -647,7 +648,6 @@ def main():
                "  sudo ./%(prog)s remove --with-ssl"
                "  # Запустить настройку с записью всего вывода в лог-файл:\n"
                "  sudo ./%(prog)s setup -l /var/log/drweb_squid_setup.log"
-               
     )
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     subparsers = parser.add_subparsers(dest='command', required=True, help='Доступные команды')
