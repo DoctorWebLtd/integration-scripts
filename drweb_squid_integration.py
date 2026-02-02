@@ -178,7 +178,7 @@ def check_squid_version(args):
     Если они не найдены, выводит сообщение об ошибке и завершает скрипт.  
     """
 
-    output = run_shell_command(['squid', '--version'], "Проверка совместимости установленной версии Squid с Dr.Web")
+    output = run_shell_command(['squid', '-v'], "Проверка совместимости установленной версии Squid с Dr.Web")
 
     """ Берет первую строку вывода и ищет номер версии"""
     version_line = output.split("\n")[0]
@@ -274,8 +274,10 @@ def check_squid_syntax():
     :raises RuntimeError: Если проверка синтаксиса провалилась.
     """
     try:
-        run_shell_command(['squid', '-k', 'parse'], title="Проверка синтаксиса конфигурации Squid")
-        logger.success("[+] Конфигурация Squid корректна.")
+        output = run_shell_command(['squid', '-k', 'parse'], title="Проверка синтаксиса конфигурации Squid")
+        if "Page faults with physical i/o" not in output:
+            logger.success("[+] Конфигурация Squid корректна.")
+        return output
     except RuntimeError as e:
         logger.error("КРИТИЧЕСКАЯ ОШИБКА: Проверка конфигурации Squid провалилась!", to_stderr=False)
         logger.error("Служба Squid не будет перезапущена, чтобы избежать сбоя.", to_stderr=False)
@@ -349,55 +351,73 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
     :param filepath: Путь к файлу `squid.conf`.
     :param new_lines: Список строк для вставки в управляемый блок.
     """
-    logger.debug(f"Обновление файла '{filepath}'...")
-    create_backup(filepath)
+    try:
+        logger.debug(f"Обновление файла '{filepath}'...")
+        create_backup(filepath)
 
-    content = ""
-    if filepath.exists():
-        content = filepath.read_text(encoding='utf-8', errors='ignore')
-        
-    # Регулярное выражение для поиска нашего блока (включая переносы строк)
-    block_pattern = re.compile(f"s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}s*?", re.DOTALL)
+        content = ""
+        if filepath.exists():
+            content = filepath.read_text(encoding='utf-8', errors='ignore')
+            
+        # Регулярное выражение для поиска нашего блока (включая переносы строк)
+        block_pattern = re.compile(f"s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}s*?", re.DOTALL)
 
-    # Формируем новый блок
-    new_block = f"{BLOCK_HEADER}\n"
-    new_block += "\n".join(new_lines)
-    new_block += f"\n{BLOCK_FOOTER}\n"
-    if ssl_lines:
-        ssl_block = f"\n{SSL_BLOCK_HEADER}\n"
-        ssl_block += "\n".join(ssl_lines)
-        ssl_block += f"\n{SSL_BLOCK_FOOTER}\n"
-    # Если блок уже существует, заменяем его. Иначе добавляем в конец.
-    if block_pattern.search(content):
-        logger.debug("Найден существующий блок конфигурации. Заменяем его.")
-        final_content = block_pattern.sub(new_block, content)
-    else:
-        logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
-        # Убедимся, что перед нашим блоком есть перенос строки
-        if content and not content.endswith('\n'):
-            content += '\n'
-        final_content = content + "\n" + new_block
-    
-    if ssl_lines:
-        block_pattern = re.compile(f"s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}s*?", re.DOTALL)
-        if block_pattern.search(final_content):
-            logger.debug("Найден существующий блок конфигурации ssl_bump. Заменяем его.")
-            final_content = block_pattern.sub(ssl_block, final_content)
+        # Формируем новый блок
+        new_block = f"{BLOCK_HEADER}\n"
+        new_block += "\n".join(new_lines)
+        new_block += f"\n{BLOCK_FOOTER}\n"
+        if ssl_lines:
+            ssl_block = f"\n{SSL_BLOCK_HEADER}\n"
+            ssl_block += "\n".join(ssl_lines)
+            ssl_block += f"\n{SSL_BLOCK_FOOTER}\n"
+        # Если блок уже существует, заменяем его. Иначе добавляем в конец.
+        if block_pattern.search(content):
+            logger.debug("Найден существующий блок конфигурации. Заменяем его.")
+            final_content = block_pattern.sub(new_block, content)
         else:
             logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
             # Убедимся, что перед нашим блоком есть перенос строки
-            if final_content and not final_content.endswith('\n'):
-                final_content += '\n'
-            final_content = final_content + "\n" + ssl_block
+            if content and not content.endswith('\n'):
+                content += '\n'
+            final_content = content + "\n" + new_block
+        
+        if ssl_lines:
+            block_pattern = re.compile(f"s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}s*?", re.DOTALL)
+            if block_pattern.search(final_content):
+                logger.debug("Найден существующий блок конфигурации ssl_bump. Заменяем его.")
+                final_content = block_pattern.sub(ssl_block, final_content)
+            else:
+                logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
+                # Убедимся, что перед нашим блоком есть перенос строки
+                if final_content and not final_content.endswith('\n'):
+                    final_content += '\n'
+                final_content = final_content + "\n" + ssl_block
 
-    pattern = r"^http_port 3128.*$"
-    replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath.parent)}/ssl/squid.pem tls-key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-    replacement += "\n"
-    final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
+            logger.debug("Добавляем настройки порта...")
+            pattern = r"^http_port 3128.*$"
+            replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath.parent)}/ssl/squid.pem tls-key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+            replacement += "\n"
+            final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
+            logger.debug("Записываем новую конфигурацию в файл...")
+            filepath.write_text(final_content, encoding='utf-8')
+            logger.success("Запись сделана")
 
-
-    filepath.write_text(final_content, encoding='utf-8')
-    logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
+            logger.debug("Проверка конфигурации...")
+            output = subprocess.run(
+                    ["squid", "-k", "parse"], capture_output=True, text=True, check=False, timeout=300
+                )
+            if output.stderr.strip():
+                logger.debug("Настройки порта выдали ошибку. Пробуем другую конфигурацию...")
+                pattern = r"^http_port 3128.*$"
+                replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB cert={str(filepath.parent)}/ssl/squid.pem key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+                replacement += "\n"
+                final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)        
+        filepath.write_text(final_content, encoding='utf-8')
+        logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
+    except Exception:
+        logger.error("Произошла ошибка при обновлении конфигурации squid.")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def get_ssl_lines():
@@ -415,6 +435,10 @@ def get_ssl_lines():
             cmd = "/usr/lib/squid/ssl_crtd"
         elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
             cmd = "/usr/lib64/squid/ssl_crtd"
+        elif os.path.isfile("/lib/squid/ssl_crtd"):
+            cmd = "/lib/squid/ssl_crtd"
+        elif os.path.isfile("/lib64/squid/ssl_crtd"):
+            cmd = "/lib64/squid/ssl_crtd"
         elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
             cmd = "/usr/local/libexec/squid/security_file_certgen"
         ssl_lines = [f"sslcrtd_program {cmd} -s /var/lib/squid/ssl_db -M 20MB",
@@ -463,21 +487,16 @@ def add_certificate_to_trusted(cert_path: Path):
     """
     try:
         output = run_shell_command(["uname", "-a"]).lower()
-        for os_type in ["debian", "ubuntu", "astra", "mint"]:
-            if os_type in output:
-                run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
-                run_shell_command(["c_rehash"])              
-                return
-        for os_type in ["centos", "fedora", "red", "rhel"]:
-            if os_type in output:
-                run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
-                run_shell_command(["c_rehash"])
-                return     
         if "freebsd" in output:
             run_shell_command(["mkdir", "-p", "/usr/local/etc/ssl/certs/"])
             run_shell_command(["cp", str(cert_path), "/usr/local/etc/ssl/certs/"])
             run_shell_command(["certctl", "rehash"])
             return
+        else:
+            run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
+            run_shell_command(["c_rehash"])              
+            return
+
     except Exception:
         logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
         return
@@ -520,6 +539,10 @@ def prepare_ssl_db():
             cmd = "/usr/lib/squid/ssl_crtd"
         elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
             cmd = "/usr/lib64/squid/ssl_crtd"
+        elif os.path.isfile("/lib/squid/ssl_crtd"):
+            cmd = "/lib/squid/ssl_crtd"
+        elif os.path.isfile("/lib64/squid/ssl_crtd"):
+            cmd = "/lib64/squid/ssl_crtd"
         elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
             cmd = "/usr/local/libexec/squid/security_file_certgen"
         run_shell_command(["mkdir", "-p", "/var/lib/squid"])
