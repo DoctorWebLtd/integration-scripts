@@ -149,17 +149,11 @@ def check_drweb_standalone_mode():
     is_enterprise_mode = "off-line" in output or "on-line" in output
 
     if is_enterprise_mode:
-        # Используем глобальный логгер для вывода ошибки, так как он есть во всех скриптах
-        error_message = (
-            "Dr.Web работает работает в режиме централизованной защиты.\n"
-            "Скрипт предназначен только для автономного режима работы.\n"
-            "Выполнение прервано."
-        )
-        logger.error(error_message, to_stderr=True)
-        sys.exit(1)
-
+        logger.info("Обнаружен режим централизованной защиты. " \
+        "Данный скрипт применит все необходимые настройки для squid, но настройки Dr.Web остануться прежними")
+        return False
     logger.debug("Проверка режима Dr.Web: обнаружен автономный (standalone) режим. Продолжение работы.")
-
+    return True
 
 def check_drweb_license():
     """Проверка наличия лицензии Dr.Web"""
@@ -450,19 +444,19 @@ def get_ssl_lines():
         return
 
 
-def handle_setup(args, squid_config_dir: Path, version: str):
+def handle_setup(args, squid_config_dir: Path, version: str, mode: bool):
     """
     Обрабатывает команду 'setup'.
 
     :param args: Объект с аргументами командной строки.
     :param squid_config_dir: Путь к директории конфигурации Squid.
     """
-    
-    logger.header("\nНастройка Dr.Web для работы с прокси-сервером Squid...")
-    squid_socket = f"{args.listen_host}:{args.listen_port}"
-    run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', squid_socket])
-    run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.Start', "Yes"])
-    logger.success("[+] Dr.Web настроен.")
+    if mode:
+        logger.header("\nНастройка Dr.Web для работы с прокси-сервером Squid...")
+        squid_socket = f"{args.listen_host}:{args.listen_port}"
+        run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', squid_socket])
+        run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.Start', "Yes"])
+        logger.success("[+] Dr.Web настроен.")
 
     logger.header("\nНастройка Squid (squid.conf)...")
     main_cf_path = squid_config_dir / 'squid.conf'
@@ -726,12 +720,12 @@ def main():
     try:
         check_root()
         check_drweb_license()
-        check_drweb_standalone_mode()
+        mode = check_drweb_standalone_mode()
         squid_config_dir = find_squid_config_dir(args)
         version = check_squid_version(args)
         # Вызов соответствующего обработчика
         if args.command == 'setup':
-            handle_setup(args, squid_config_dir, version)
+            handle_setup(args, squid_config_dir, version, mode)
         elif args.command == 'remove':
             handle_remove(args, squid_config_dir)
 
