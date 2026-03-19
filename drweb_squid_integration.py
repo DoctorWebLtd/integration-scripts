@@ -494,10 +494,27 @@ def add_certificate_to_trusted(cert_path: Path):
             run_shell_command(["certctl", "rehash"])
             return
         else:
-            run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
-            run_shell_command(["c_rehash"])              
-            return
-
+            cmds = ["c_rehash", "update-ca-certificates", "update-ca-trust"]
+            for cmd in cmds:
+                try:
+                    run_shell_command(["which", cmd])
+                    if cmd == "c_rehash":    
+                        run_shell_command(["cp", str(cert_path), "/etc/ssl/certs/"])
+                        run_shell_command([cmd])
+                        return
+                    if cmd == "update-ca-certificates":
+                        cert_crt = str(cert_path).replace(".pem", ".crt")
+                        run_shell_command(["cp", str(cert_path), cert_crt])
+                        run_shell_command(["cp", cert_crt, "/usr/local/share/ca-certificates/"])
+                        run_shell_command([cmd])
+                        return
+                    if cmd == "update-ca-trust":
+                        run_shell_command(["cp", str(cert_path), "/etc/pki/ca-trust/source/anchors/"])
+                        run_shell_command([cmd])
+                        return
+                except Exception:
+                    continue
+                raise RuntimeError
     except Exception:
         logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
         return
@@ -549,7 +566,16 @@ def prepare_ssl_db():
         run_shell_command(["mkdir", "-p", "/var/lib/squid"])
         run_shell_command(["rm", "-rf", "/var/lib/squid/ssl_db"])
         run_shell_command([cmd, "-c", "-s", "/var/lib/squid/ssl_db", "-M", "20MB"])
-        run_shell_command(["chown", "-R", "proxy:proxy", "/var/lib/squid"])
+        #Определить пользователя и группу squid(может быть proxy или squid)
+        try:
+            output = run_shell_command(["id", "proxy"])
+        except Exception:
+            output = "error"
+        if "uid" in output:
+            user = "proxy"
+        else:
+            user = "squid"
+        run_shell_command(["chown", "-R", f"{user}:{user}", "/var/lib/squid"])
     except Exception:
         logger.warning(f"Не получилось подготовить базу данных SSL сертификатов. Пожалуйста подготовьте ее самостоятельно.")
         return
