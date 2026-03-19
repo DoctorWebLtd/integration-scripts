@@ -12,11 +12,44 @@ from pathlib import Path
 
 __version__ = "1.0.0"
 
+# Блоки, которые скрипт ищет в конфигурационном файле squid
 BLOCK_HEADER = "# --- BEGIN Dr.Web integration managed by script ---"
 BLOCK_FOOTER = "# --- END Dr.Web integration managed by script ---"
-
 SSL_BLOCK_HEADER = "# --- BEGIN SSL bump configuration managed by Dr.Web script ---"
 SSL_BLOCK_FOOTER = "# --- END SSL bump configuration managed by Dr.Web script ---"
+
+
+def run_shell_command(command: list, title: str = ""):
+    """
+    Выполняет внешнюю команду в оболочке ОС.
+
+    :param command: Список, содержащий команду и ее аргументы.
+    :param title: Описание действия для логирования.
+    :raises RuntimeError: Если команда завершается с ошибкой.
+    :return: Строка с stdout выполненной команды.
+    """
+    if title:
+        logger.debug(f"--- {title} ---")
+    logger.debug(f"Выполнение shell-команды: {' '.join(command)}")
+    try:
+        process = subprocess.run(
+            command, capture_output=True, text=True, check=True, timeout=300
+        )
+        if process.stdout.strip():
+            logger.debug(f"STDOUT:\n{process.stdout.strip()}")
+        return process.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        error_message = (
+            f"Команда '{' '.join(e.cmd)}' завершилась с ошибкой (код {e.returncode}).\n"
+            f"STDERR: {e.stderr.strip()}"
+        )
+        raise RuntimeError(error_message)
+    except FileNotFoundError:
+        raise RuntimeError(f"Команда '{command[0]}' не найдена. Убедитесь, что утилита установлена и доступна в PATH.")
+    except Exception as e:
+        raise RuntimeError(f"Непредвиденная ошибка при выполнении команды: {e}")
+
+
 class AnsiColors:
     """
     Класс-хранилище для ANSI-кодов цветов.
@@ -230,37 +263,6 @@ def find_squid_config_dir(args) -> Path:
     raise FileNotFoundError("Не удалось автоматически определить конфигурационную директорию Squid.")
 
 
-def run_shell_command(command: list, title: str = ""):
-    """
-    Выполняет внешнюю команду в оболочке ОС.
-
-    :param command: Список, содержащий команду и ее аргументы.
-    :param title: Описание действия для логирования.
-    :raises RuntimeError: Если команда завершается с ошибкой.
-    :return: Строка с stdout выполненной команды.
-    """
-    if title:
-        logger.debug(f"--- {title} ---")
-    logger.debug(f"Выполнение shell-команды: {' '.join(command)}")
-    try:
-        process = subprocess.run(
-            command, capture_output=True, text=True, check=True, timeout=300
-        )
-        if process.stdout.strip():
-            logger.debug(f"STDOUT:\n{process.stdout.strip()}")
-        return process.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        error_message = (
-            f"Команда '{' '.join(e.cmd)}' завершилась с ошибкой (код {e.returncode}).\n"
-            f"STDERR: {e.stderr.strip()}"
-        )
-        raise RuntimeError(error_message)
-    except FileNotFoundError:
-        raise RuntimeError(f"Команда '{command[0]}' не найдена. Убедитесь, что утилита установлена и доступна в PATH.")
-    except Exception as e:
-        raise RuntimeError(f"Непредвиденная ошибка при выполнении команды: {e}")
-
-
 def check_squid_syntax():
     """
     Запускает `squid -k parse` для проверки синтаксиса конфигурации.
@@ -279,6 +281,13 @@ def check_squid_syntax():
 
 
 def get_squid_conf_lines(args, version):
+    """
+    Подбирает соответствующую версии squid конфигурацию. 
+    Также подставляет пользовательские настройки сокета ICAPD.
+    
+    :param args: Объект с аргументами командной строки.
+    :param version: Версия squid
+    """
     squid_socket = f"{args.listen_host}:{args.listen_port}"
     
     main_cf_lines_v3_2 = [
@@ -388,21 +397,20 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
                 final_content = final_content + "\n" + ssl_block
 
             logger.debug("Добавляем настройки порта...")
-            pattern = r"^http_port 3128.*$"
+            pattern = r"^http_port.*\n$"
             replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath.parent)}/ssl/squid.pem tls-key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-            replacement += "\n"
+            replacement += "\n" 
             final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
             logger.debug("Записываем новую конфигурацию в файл...")
             filepath.write_text(final_content, encoding='utf-8')
             logger.success("Запись сделана")
-
             logger.debug("Проверка конфигурации...")
             output = subprocess.run(
                     ["squid", "-k", "parse"], capture_output=True, text=True, check=False, timeout=300
                 )
             if output.stderr.strip():
                 logger.debug("Настройки порта выдали ошибку. Пробуем другую конфигурацию...")
-                pattern = r"^http_port 3128.*$"
+                pattern = r"^http_port.*\n$"
                 replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB cert={str(filepath.parent)}/ssl/squid.pem key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
                 replacement += "\n"
                 final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)        
@@ -474,10 +482,9 @@ def handle_setup(args, squid_config_dir: Path, version: str, mode: bool):
 
 def add_certificate_to_trusted(cert_path: Path):
     """
-    Добавляет SSL сертификат с список доверенных сертификатов
-    
-    :param cert_path: Описание
-    :type cert_path: Path
+    Добавляет SSL сертификат в список доверенных сертификатов системы
+
+    :param cert_path: Путь к ssl сертификату
     """
     try:
         output = run_shell_command(["uname", "-a"]).lower()
@@ -520,7 +527,7 @@ def generate_certificate(squid_dir_path: Path):
 
 def prepare_ssl_db():
     """
-    Создает базу данных SSL сертификатов для работы squid 
+    Создает базу данных SSL сертификатов для работы squid в режиму ssl_bump 
     """
     try:
         if os.path.isfile("/usr/sbin/ssl_crtd"):
@@ -610,7 +617,7 @@ def remove_squid_config_block(filepath: Path, with_ssl:bool):
             if content:
                 final_content += '\n'
 
-            pattern = r"^http_port 3128.*$"
+            pattern = r"^http_port.*\n$"
             replacement = f"http_port 3128"
             replacement += "\n"
             final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
