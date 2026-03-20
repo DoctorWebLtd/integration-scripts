@@ -404,7 +404,6 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list, a
             content = final_content.split("\n")
             for num_line, line in enumerate(content):
                 if re.search(current_port_pattern, line):
-                    logger.debug("FOUND MATCH FOR CURRENT_PORT")
                     content[num_line] = "#drweb " + line
             final_content = "\n".join(content)
             block_pattern = re.compile(f"s*?{re.escape(SSL_PORT_HEADER)}.*?{re.escape(SSL_PORT_FOOTER)}s*?", re.DOTALL)
@@ -424,7 +423,6 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list, a
                 final_content = final_content.split("\n")
                 for line_num, line in enumerate(final_content):
                     if re.search(pattern_one, line) or re.search(pattern_two, line):
-                        logger.debug("FOUND PATTERN MATCH")
                         final_content = final_content[:line_num+1] + http_port_block + final_content[line_num+1:]
                         final_content = "\n".join(final_content)
                         logger.debug(final_content)
