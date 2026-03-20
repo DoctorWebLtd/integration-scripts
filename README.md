@@ -2,7 +2,7 @@
 
 Версия: 1.0.0
 
-Настройка интеграции антивируса Dr.Web ICAPD с Squid на Linux-дистрибутивах.
+Настройка интеграции антивируса Dr.Web ICAPD с прокси-сервером Squid на Unix системах.
 
 ---
 
@@ -60,11 +60,18 @@
   sudo ./drweb_squid_integration setup --with-ssl
 ```
 
-Вы также можете указать нестандартный сокет:
+Вы также можете указать нестандартный сокет ICAPD:
 
 ```bash
-  sudo ./drweb_squid_integration setup --listen-port 127.0.0.1 --listen-host 1345 
+  sudo ./drweb_squid_integration setup --icapd-port 127.0.0.1 --icapd-host 1345 
 ```
+
+Также вы можете указать нестандартный порт Squid
+
+```bash
+  sudo ./drweb_squid_integration setup --squid-port 3129 
+```
+
 
 #### **Настройка с отладкой и лог-файлом**
 

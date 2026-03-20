@@ -17,7 +17,8 @@ BLOCK_HEADER = "# --- BEGIN Dr.Web integration managed by script ---"
 BLOCK_FOOTER = "# --- END Dr.Web integration managed by script ---"
 SSL_BLOCK_HEADER = "# --- BEGIN SSL bump configuration managed by Dr.Web script ---"
 SSL_BLOCK_FOOTER = "# --- END SSL bump configuration managed by Dr.Web script ---"
-
+SSL_PORT_HEADER = "# --- BEGIN SSL port configuration managed by Dr.Web script ---"
+SSL_PORT_FOOTER = "# --- END SSL port configuration managed by Dr.Web script ---"
 
 def run_shell_command(command: list, title: str = ""):
     """
@@ -288,12 +289,12 @@ def get_squid_conf_lines(args, version):
     :param args: Объект с аргументами командной строки.
     :param version: Версия squid
     """
-    squid_socket = f"{args.listen_host}:{args.listen_port}"
+    icapd_socket = f"{args.icapd_host}:{args.icapd_port}"
     
     main_cf_lines_v3_2 = [
         "icap_enable on",
-        f"icap_service i_req reqmod_precache bypass=0 icap://{squid_socket}/reqmod",
-        f"icap_service i_res respmod_precache bypass=0 icap://{squid_socket}/respmod",
+        f"icap_service i_req reqmod_precache bypass=0 icap://{icapd_socket}/reqmod",
+        f"icap_service i_res respmod_precache bypass=0 icap://{icapd_socket}/respmod",
         "adaptation_access i_req allow all",
         "adaptation_access i_res allow all",
         "icap_preview_enable on",
@@ -304,8 +305,8 @@ def get_squid_conf_lines(args, version):
     ]
     main_cf_lines_v3_1 = [
         "icap_enable on",
-        f"icap_service i_req reqmod_precache bypass=0 icap://{squid_socket}/reqmod",
-        f"icap_service i_res respmod_precache bypass=0 icap://{squid_socket}/respmod",
+        f"icap_service i_req reqmod_precache bypass=0 icap://{icapd_socket}/reqmod",
+        f"icap_service i_res respmod_precache bypass=0 icap://{icapd_socket}/respmod",
         "adaptation_access i_req allow all",
         "adaptation_access i_res allow all",
         "icap_preview_enable on",
@@ -316,8 +317,8 @@ def get_squid_conf_lines(args, version):
     ]
     main_cf_lines_v3_0 = [
         "icap_enable on",
-        f"icap_service i_req reqmod_precache 0 icap://{squid_socket}/reqmod",
-        f"icap_service i_res respmod_precache 0 icap://{squid_socket}/respmod",
+        f"icap_service i_req reqmod_precache 0 icap://{icapd_socket}/reqmod",
+        f"icap_service i_res respmod_precache 0 icap://{icapd_socket}/respmod",
         "icap_class icapd_class_req i_req",
         "icap_class icapd_class_resp i_res",
         "icap_access icapd_class_req allow all",
@@ -344,7 +345,7 @@ def get_squid_conf_lines(args, version):
     return main_cf_lines
 
 
-def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
+def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list, args):
     """
     Безопасно обновляет конфигурационный файл Squid.
 
@@ -390,17 +391,48 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
                 logger.debug("Найден существующий блок конфигурации ssl_bump. Заменяем его.")
                 final_content = block_pattern.sub(ssl_block, final_content)
             else:
-                logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
+                logger.debug("Блок конфигурации ssl_bump не найден. Добавляем новый в конец файла.")
                 # Убедимся, что перед нашим блоком есть перенос строки
                 if final_content and not final_content.endswith('\n'):
                     final_content += '\n'
                 final_content = final_content + "\n" + ssl_block
 
             logger.debug("Добавляем настройки порта...")
-            pattern = r"^http_port.*\n$"
-            replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath.parent)}/ssl/squid.pem tls-key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-            replacement += "\n" 
-            final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
+
+            # Закоментируем текущие настройки порта
+            current_port_pattern = re.compile(f"^http_port.*{args.squid_port}")
+            content = final_content.split("\n")
+            for num_line, line in enumerate(content):
+                if re.search(current_port_pattern, line):
+                    logger.debug("FOUND MATCH FOR CURRENT_PORT")
+                    content[num_line] = "#drweb " + line
+            final_content = "\n".join(content)
+            block_pattern = re.compile(f"s*?{re.escape(SSL_PORT_HEADER)}.*?{re.escape(SSL_PORT_FOOTER)}s*?", re.DOTALL)
+            http_port_line = f"http_port {args.squid_port} tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath.parent)}/ssl/squid.pem tls-key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+            logger.debug(http_port_line)
+            http_port_block = [f"\n{SSL_PORT_HEADER}\n"]
+            http_port_block.append(f"{http_port_line}\n")
+            http_port_block.append(f"{SSL_PORT_FOOTER}")
+            if block_pattern.search(final_content):
+                logger.debug("Найден существующий блок конфигурации http_port. Заменяем его.")
+                final_content = block_pattern.sub("".join(http_port_block), final_content)
+            else:
+                logger.debug("Блок конфигурации http_port не найден. Добавляем новый.")
+                # Убедимся, что перед нашим блоком есть перенос строки
+                pattern_one = r"^http_port.*"
+                pattern_two = r"^#http_port.*"
+                final_content = final_content.split("\n")
+                for line_num, line in enumerate(final_content):
+                    if re.search(pattern_one, line) or re.search(pattern_two, line):
+                        logger.debug("FOUND PATTERN MATCH")
+                        final_content = final_content[:line_num+1] + http_port_block + final_content[line_num+1:]
+                        final_content = "\n".join(final_content)
+                        logger.debug(final_content)
+                        break
+                else:
+                    final_content = "\n".join(final_content)
+                    final_content = final_content + "\n" + "".join(http_port_block)
+            # final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
             logger.debug("Записываем новую конфигурацию в файл...")
             filepath.write_text(final_content, encoding='utf-8')
             logger.success("Запись сделана")
@@ -410,10 +442,9 @@ def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list):
                 )
             if output.stderr.strip():
                 logger.debug("Настройки порта выдали ошибку. Пробуем другую конфигурацию...")
-                pattern = r"^http_port.*\n$"
-                replacement = f"http_port 3128 tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB cert={str(filepath.parent)}/ssl/squid.pem key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-                replacement += "\n"
-                final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)        
+                pattern = r"^http_port.*tls-cert.*\n$"
+                http_port_line = f"http_port {args.squid_port} tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB cert={str(filepath.parent)}/ssl/squid.pem key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
+                final_content = re.sub(pattern, http_port_line, final_content, flags=re.MULTILINE)        
         filepath.write_text(final_content, encoding='utf-8')
         logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
     except Exception:
@@ -443,7 +474,7 @@ def get_ssl_lines():
             cmd = "/lib64/squid/ssl_crtd"
         elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
             cmd = "/usr/local/libexec/squid/security_file_certgen"
-        ssl_lines = [f"sslcrtd_program {cmd} -s /var/lib/squid/ssl_db -M 20MB",
+        ssl_lines = [f"sslcrtd_program {cmd} -s /usr/local/squid/var/lib/ssl_db -M 20MB",
                     "sslproxy_cert_error allow all",
                     "ssl_bump stare all"]
         return ssl_lines
@@ -461,8 +492,8 @@ def handle_setup(args, squid_config_dir: Path, version: str, mode: bool):
     """
     if mode:
         logger.header("\nНастройка Dr.Web для работы с прокси-сервером Squid...")
-        squid_socket = f"{args.listen_host}:{args.listen_port}"
-        run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', squid_socket])
+        icapd_socket = f"{args.icapd_host}:{args.icapd_port}"
+        run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.ListenAddress', icapd_socket])
         run_shell_command(['drweb-ctl', 'cfset', 'ICAPD.Start', "Yes"])
         logger.success("[+] Dr.Web настроен.")
 
@@ -477,7 +508,7 @@ def handle_setup(args, squid_config_dir: Path, version: str, mode: bool):
         generate_certificate(squid_config_dir)
         prepare_ssl_db()
         ssl_lines = get_ssl_lines()
-    update_squid_config_file(main_cf_path, main_cf_lines, ssl_lines)
+    update_squid_config_file(main_cf_path, main_cf_lines, ssl_lines, args)
 
 
 def add_certificate_to_trusted(cert_path: Path):
@@ -563,9 +594,7 @@ def prepare_ssl_db():
             cmd = "/lib64/squid/ssl_crtd"
         elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
             cmd = "/usr/local/libexec/squid/security_file_certgen"
-        run_shell_command(["mkdir", "-p", "/var/lib/squid"])
-        run_shell_command(["rm", "-rf", "/var/lib/squid/ssl_db"])
-        run_shell_command([cmd, "-c", "-s", "/var/lib/squid/ssl_db", "-M", "20MB"])
+        
         #Определить пользователя и группу squid(может быть proxy или squid)
         try:
             output = run_shell_command(["id", "proxy"])
@@ -575,7 +604,10 @@ def prepare_ssl_db():
             user = "proxy"
         else:
             user = "squid"
-        run_shell_command(["chown", "-R", f"{user}:{user}", "/var/lib/squid"])
+        run_shell_command(["mkdir", "-p", "/usr/local/squid/var/lib/"])
+        run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid"])
+        run_shell_command(["rm", "-rf", "/usr/local/squid/var/lib/ssl_db"])
+        run_shell_command([cmd, "-c", "-s", "/usr/local/squid/var/lib/ssl_db", "-M", "20MB"])
     except Exception:
         logger.warning(f"Не получилось подготовить базу данных SSL сертификатов. Пожалуйста подготовьте ее самостоятельно.")
         return
@@ -642,19 +674,30 @@ def remove_squid_config_block(filepath: Path, with_ssl:bool):
             # Добавляем один перенос строки в конце, если файл не пустой
             if content:
                 final_content += '\n'
-
-            pattern = r"^http_port.*\n$"
-            replacement = f"http_port 3128"
-            replacement += "\n"
-            final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
-
             logger.success(f"[+] Блок конфигурации ssl_bump успешно удален из '{filepath.name}'.")
         else:
             logger.info(f"[*] Блок конфигурации ssl_bump не найден в '{filepath.name}'. Действий не требуется.")
     
+        if final_content:
+            content = final_content
+
+        pattern = re.compile("#drweb http_port")
+        if pattern.search(content):
+            content = pattern.sub("http_port",content)
+        
+        block_pattern = re.compile(f"s*?{re.escape(SSL_PORT_HEADER)}.*?{re.escape(SSL_PORT_FOOTER)}s*?", re.DOTALL)
+
+        if block_pattern.search(content):
+            logger.debug("Найден блок конфигурации http_port. Удаляем его.")
+            final_content = block_pattern.sub("", content)
+            logger.success(f"[+] Блок конфигурации http_port успешно удален.")
+        else:
+            logger.info(f"[*] Блок конфигурации http_port не найден в '{filepath.name}'. Действий не требуется.")
+    
     if final_content:
         filepath.write_text(final_content, encoding='utf-8')
     return
+
 
 def handle_remove(args, squid_config_dir: Path):
     """
@@ -687,8 +730,8 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
         epilog= "Параметры:\n"
                 "  -squid-config-dir Явно указать путь к директории конфигурации Squid\n"
-                "  --listen-host     Хост для ICAPD-сокета (по умолч.: 127.0.0.1)\n"
-                "  --listen-port     Порт для ICAPD-сокета (по умолч.: 1344)\n"
+                "  --icapd-host     Хост для ICAPD-сокета (по умолч.: 127.0.0.1)\n"
+                "  --icapd-port     Порт для ICAPD-сокета (по умолч.: 1344)\n"
                 "  --with-ssl        Провести настройку squid для разбора HTTPS трафика\n"
                 "  -l, --log-file    Сохранять весь вывод в файл журнала\n"
                 "  -d, --debug       Включить подробный отладочный вывод\n"
@@ -699,8 +742,10 @@ def main():
                 "  sudo ./%(prog)s setup\n\n"
                 "  # Настройка интеграции Dr.Web и Squid с разбором HTTPS трафика\n"
                 "  sudo ./%(prog)s setup --with-ssl\n\n"
-                "  # Настройка с указанием хоста и порта Dr.Web:\n"
-                "  sudo ./%(prog)s setup --icapd-port 1345 --icapd-host 127.0.0.1\n\n"
+                "  # Настройка с указанием хоста и порта Dr.Web ICAPD:\n"
+                "  sudo ./%(prog)s setup --icapd-port 127.0.0.1 --icapd-host 1345 \n\n"
+                "  # Настройка с указанием кастомного порта squid:\n"
+                "  sudo ./%(prog)s setup --squid-port 3129\n"
                 "  # Удаление ранее сделанных настроек с автоматическим подтверждением:\n"
                 "  sudo ./%(prog)s remove -y\n\n"
                 "  # Удаление ранее сделанных настроек, в том числе расшифровку HTTPS трафика\n"
@@ -716,8 +761,9 @@ def main():
     base_parser = argparse.ArgumentParser(add_help=False, 
                                           epilog="Параметры:\n"
                                                  "-squid-config-dir Явно указать путь к директории конфигурации Squid"
-                                                 "--listen-host     Хост для ICAPD-сокета (по умолч.: 127.0.0.1)"
-                                                 "--listen-port     Порт для ICAPD-сокета (по умолч.: 1344)"
+                                                 "--icapd-host      Хост для ICAPD-сокета (по умолч.: 127.0.0.1)"
+                                                 "--icapd-port      Порт для ICAPD-сокета (по умолч.: 1344)"
+                                                 "--squid-port      Порт для параметра http_port в Squid(по умолч.: 3128)"
                                                  "--with-ssl        Провести настройку squid для разбора HTTPS трафика"
                                                  "-l, --log-file    Сохранять весь вывод в файл журнала"
                                                  "-d, --debug       Включить подробный отладочный вывод"
@@ -731,7 +777,8 @@ def main():
     base_parser.add_argument('--no-color', action='store_true', help='Отключить цветной вывод.')
     base_parser.add_argument('--with-ssl', dest="with_ssl", default=False, action='store_true',
                                help='Провести настройку squid для разбора HTTPS трафика.')
-
+    base_parser.add_argument('--squid-port', dest="squid_port", default=3128, type=int,
+                               help='Порт для параметра http_port в Squid(по умолч.: 3128)')
     interactive_parser = argparse.ArgumentParser(add_help=False)
     interactive_parser.add_argument('-y', '--yes', action='store_true',
                                     help='Пропустить интерактивные запросы подтверждения.')
@@ -739,15 +786,13 @@ def main():
     # --- Суб-парсер для команды 'setup' ---
     parser_icapd = subparsers.add_parser('setup', parents=[base_parser],
                                           help='Настройка интеграции через ICAPD.')
-    parser_icapd.add_argument('--listen-host', dest="listen_host", default='127.0.0.1',
+    parser_icapd.add_argument('--icapd-host', dest="icapd_host", default='127.0.0.1',
                                help='Хост для ICAPD-сокета (по умолч.: 127.0.0.1).')
-    parser_icapd.add_argument('--listen-port', dest="listen_port", default=1344, type=int,
+    parser_icapd.add_argument('--icapd-port', dest="icapd_port", default=1344, type=int,
                                help='Порт для ICAPD-сокета (по умолч.: 1344).')
-
     # --- Суб-парсер для команды 'remove' ---
     subparsers.add_parser('remove', parents=[base_parser, interactive_parser],
                           help='Удаление ранее сделанных настроек.')
-
     args = parser.parse_args()
     logger.reconfigure(debug_mode=args.debug, color_enabled=not args.no_color, log_file=args.log_file)
     try:
