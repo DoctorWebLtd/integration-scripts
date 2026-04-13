@@ -603,9 +603,10 @@ def prepare_ssl_db():
         else:
             user = "squid"
         run_shell_command(["mkdir", "-p", "/usr/local/squid/var/lib/"])
-        run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid"])
         run_shell_command(["rm", "-rf", "/usr/local/squid/var/lib/ssl_db"])
+        run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid/var/lib/"])
         run_shell_command([cmd, "-c", "-s", "/usr/local/squid/var/lib/ssl_db", "-M", "20MB"])
+        run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid"])
     except Exception:
         logger.warning(f"Не получилось подготовить базу данных SSL сертификатов. Пожалуйста подготовьте ее самостоятельно.")
         return
