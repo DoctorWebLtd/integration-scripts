@@ -7,7 +7,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-
+from typing import List
 
 
 __version__ = "1.0.0"
@@ -230,8 +230,15 @@ def check_squid_version(args):
             if "--with-openssl" not in output or "--enable-ssl-crtd" not in output:
                 logger.error("Ошибка: Установленная версия Squid была скомпилирона без поддержки разбора HTTPS. Перекомпилируйте squid с флагами --with-openssl и --enable-ssl-crtd.")
                 sys.exit(1)         
-     
-    return version
+    try:
+        
+        version = version.strip().split(".")
+        minor_version = int(version[1])
+        logger.debug(f"minor_version: {minor_version}")
+    except (ValueError, TypeError):
+        logger.error("Ошибка: Не получилось определить минорную версию squid.")
+        raise
+    return minor_version
 
 
 def find_squid_config_dir(args) -> Path:
