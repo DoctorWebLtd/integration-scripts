@@ -288,65 +288,48 @@ def check_squid_syntax():
         raise e
 
 
-def get_squid_conf_lines(args, version):
+def get_squid_conf_lines(args, version:int):
     """
     Подбирает соответствующую версии squid конфигурацию. 
     Также подставляет пользовательские настройки сокета ICAPD.
     
     :param args: Объект с аргументами командной строки.
-    :param version: Версия squid
+    :param version: Минорная версия squid
     """
     icapd_socket = f"{args.icapd_host}:{args.icapd_port}"
-    
-    main_cf_lines_v3_2 = [
-        "icap_enable on",
-        f"icap_service i_req reqmod_precache bypass=0 icap://{icapd_socket}/reqmod",
-        f"icap_service i_res respmod_precache bypass=0 icap://{icapd_socket}/respmod",
-        "adaptation_access i_req allow all",
-        "adaptation_access i_res allow all",
-        "icap_preview_enable on",
-        "icap_preview_size 0",
-        "adaptation_send_client_ip on",
-        "adaptation_send_username on",
-        "icap_persistent_connections on"
-    ]
-    main_cf_lines_v3_1 = [
-        "icap_enable on",
-        f"icap_service i_req reqmod_precache bypass=0 icap://{icapd_socket}/reqmod",
-        f"icap_service i_res respmod_precache bypass=0 icap://{icapd_socket}/respmod",
-        "adaptation_access i_req allow all",
-        "adaptation_access i_res allow all",
-        "icap_preview_enable on",
-        "icap_preview_size 0",
-        "icap_send_client_ip on",
-        "icap_send_client_username on",
-        "icap_persistent_connections on"
-    ]
-    main_cf_lines_v3_0 = [
-        "icap_enable on",
-        f"icap_service i_req reqmod_precache 0 icap://{icapd_socket}/reqmod",
-        f"icap_service i_res respmod_precache 0 icap://{icapd_socket}/respmod",
-        "icap_class icapd_class_req i_req",
-        "icap_class icapd_class_resp i_res",
-        "icap_access icapd_class_req allow all",
-        "icap_access icapd_class_resp allow all",
-        "icap_preview_enable on",
-        "icap_preview_size 0",
-        "icap_send_client_ip on",
-        "icap_send_client_username on",
-        "icap_persistent_connections on"
-    ]
 
-    version_major = version.split(".")[0]
-    version_minor = version.split(".")[1]
-    if version_major == 3 and version_minor == 0:
-        main_cf_lines = main_cf_lines_v3_0
+    conf_lines = ["icap_enable on",
+            f"icap_service i_req reqmod_precache bypass=0 icap://{icapd_socket}/reqmod",
+            f"icap_service i_res respmod_precache bypass=0 icap://{icapd_socket}/respmod"]
+    
+    conf_lines_mid = ["adaptation_access i_req allow all",
+                    "adaptation_access i_res allow all",
+                    "icap_preview_enable on",
+                    "icap_preview_size 0",
+                    ]
+
+    conf_lines_end = ["icap_send_client_ip on",
+                    "icap_send_client_username on",
+                    "icap_persistent_connections on"]
+    
+    logger.debug(version)
+    conf_lines  += conf_lines_mid if version >= 1 else ["icap_class icapd_class_req i_req",
+                                                            "icap_class icapd_class_resp i_res",
+                                                            "icap_access icapd_class_req allow all",
+                                                            "icap_access icapd_class_resp allow all",
+                                                            "icap_preview_enable on",
+                                                            "icap_preview_size 0",]
+    
+    conf_lines  += conf_lines_end if version <= 1 else ["adaptation_send_client_ip on",
+                                                            "adaptation_send_username on",
+                                                            "icap_persistent_connections on"]
+
+
+    if version == 0:
         logger.info("Squid версии 3.0 обнаружен.")
-    elif version_major == 3 and version_minor == 1:
-        main_cf_lines = main_cf_lines_v3_1
+    elif version == 1:
         logger.info("Squid версии 3.1 обнаружен.")
     else:
-        main_cf_lines = main_cf_lines_v3_2
         logger.info("Squid версии 3.2 или выше обнаружен.")
     
     return main_cf_lines
