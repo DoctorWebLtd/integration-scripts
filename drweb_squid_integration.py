@@ -332,109 +332,194 @@ def get_squid_conf_lines(args, version:int):
     else:
         logger.info("Squid версии 3.2 или выше обнаружен.")
     
-    return main_cf_lines
+    return conf_lines
 
 
-def update_squid_config_file(filepath: Path, new_lines: list, ssl_lines: list, args):
+def _replace_or_add_block(
+    content: str,
+    header: str,
+    footer: str,
+    new_lines: List[str],
+    block_name: str,
+) -> str:
+    """
+    Заменяет существующий блок между header и footer на новый блок,
+    составленный из new_lines. Если блок не найден, добавляет его в конец.
+
+    :param content: Исходное содержимое файла
+    :param header: Маркер начала блока
+    :param footer: Маркер конца блока
+    :param new_lines: Строки для вставки внутрь блока
+    :param block_name: Имя блока для логирования
+    :return: Новое содержимое с обновлённым блоком
+    """
+    pattern = re.compile(
+        rf"\s*?{re.escape(header)}.*?{re.escape(footer)}\s*?",
+        re.DOTALL,
+    )
+    new_block = f"{header}\n" + "\n".join(new_lines) + f"\n{footer}\n"
+
+    if pattern.search(content):
+        logger.debug(f"Найден существующий блок конфигурации '{block_name}'. Заменяем его.")
+        return pattern.sub(new_block, content)
+    else:
+        logger.debug(f"Блок конфигурации '{block_name}' не найден. Добавляем новый в конец файла.")
+        if content and not content.endswith("\n"):
+            content += "\n"
+        return content + "\n" + new_block
+
+
+def comment_http_port_lines(content: str, squid_port: int) -> str:
+    """
+    Комментирует все строки http_port, содержащие указанный порт.
+    """
+    lines = content.splitlines()
+    port_pattern = re.compile(rf"^http_port.*{squid_port}")
+    commented_lines = []
+    for line in lines:
+        if port_pattern.search(line) and not line.strip().startswith("#"):
+            line = "#drweb " + line
+        commented_lines.append(line)
+    return "\n".join(commented_lines)
+
+
+def build_http_port_line(squid_port: int, cert_dir: Path, use_tls_cert: bool = True) -> str:
+    """
+    Формирует строку http_port с нужными параметрами.
+    """
+    cert_path = cert_dir / "ssl" / "squid.pem"
+    key_path = cert_dir / "ssl" / "squid.key"
+    cert_param = "tls-cert" if use_tls_cert else "cert"
+    return (
+        f"http_port {squid_port} tcpkeepalive=60,30,3 ssl-bump "
+        f"generate-host-certificates=on dynamic_cert_mem_cache_size=20MB "
+        f"{cert_param}={cert_path} tls-key={key_path} "
+        f"cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS "
+        f"options=NO_TLSv1,NO_SSLv3"
+    )
+
+
+def update_http_port_block(content: str, squid_port: int, cert_dir: Path) -> str:
+    """
+    Обрабатывает блок конфигурации http_port:
+    - комментирует старые строки http_port с нужным портом,
+    - заменяет или добавляет управляемый блок с новыми настройками порта.
+    """
+    # Сначала закомментируем существующие строки http_port
+    content = comment_http_port_lines(content, squid_port)
+
+    # Подготавливаем новый блок
+    port_line = build_http_port_line(squid_port, cert_dir, use_tls_cert=True)
+    port_block_lines = [f"\n{SSL_PORT_HEADER}\n", f"{port_line}\n", SSL_PORT_FOOTER]
+
+    # Пытаемся заменить существующий блок с маркерами
+    pattern = re.compile(
+        rf"\s*?{re.escape(SSL_PORT_HEADER)}.*?{re.escape(SSL_PORT_FOOTER)}\s*?",
+        re.DOTALL,
+    )
+    if pattern.search(content):
+        logger.debug("Найден существующий блок конфигурации http_port. Заменяем его.")
+        return pattern.sub("".join(port_block_lines), content)
+    else:
+        logger.debug("Блок конфигурации http_port не найден. Добавляем новый.")
+        # Ищем любую строку http_port (закомментированную или нет) и вставляем блок после неё
+        lines = content.splitlines()
+        http_port_pattern = re.compile(r"^#?(drweb\s+)?http_port.*")
+        for i, line in enumerate(lines):
+            if http_port_pattern.search(line):
+                # Вставляем новый блок после найденной строки
+                lines[i+1:i+1] = port_block_lines
+                return "\n".join(lines)
+        # Если строк http_port нет вообще — добавляем в конец
+        if content and not content.endswith("\n"):
+            content += "\n"
+        return content + "\n" + "".join(port_block_lines)
+
+
+def update_squid_config_file(
+    filepath: Path,
+    new_lines: List[str],
+    ssl_lines: List[str],
+    args,
+) -> None:
     """
     Безопасно обновляет конфигурационный файл Squid.
 
     Функция находит и заменяет ранее созданный блок конфигурации,
     обрамленный маркерами. Если блок не найден, он добавляется в конец файла.
+    При наличии ssl_lines также настраивает ssl_bump и параметры http_port.
 
     :param filepath: Путь к файлу `squid.conf`.
     :param new_lines: Список строк для вставки в управляемый блок.
+    :param ssl_lines: Список строк для блока ssl_bump (может быть пустым).
+    :param args: Объект с атрибутами squid_port и другими параметрами.
     """
     try:
         logger.debug(f"Обновление файла '{filepath}'...")
         create_backup(filepath)
 
+        # Чтение текущего содержимого
         content = ""
         if filepath.exists():
-            content = filepath.read_text(encoding='utf-8', errors='ignore')
-            
-        # Регулярное выражение для поиска нашего блока (включая переносы строк)
-        block_pattern = re.compile(f"s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}s*?", re.DOTALL)
+            content = filepath.read_text(encoding="utf-8", errors="ignore")
 
-        # Формируем новый блок
-        new_block = f"{BLOCK_HEADER}\n"
-        new_block += "\n".join(new_lines)
-        new_block += f"\n{BLOCK_FOOTER}\n"
+        # 1. Обновление основного блока конфигурации
+        content = _replace_or_add_block(
+            content,
+            BLOCK_HEADER,
+            BLOCK_FOOTER,
+            new_lines,
+            "основной",
+        )
+
+        # 2. Если есть ssl-настройки — обрабатываем ssl_bump и http_port
         if ssl_lines:
-            ssl_block = f"\n{SSL_BLOCK_HEADER}\n"
-            ssl_block += "\n".join(ssl_lines)
-            ssl_block += f"\n{SSL_BLOCK_FOOTER}\n"
-        # Если блок уже существует, заменяем его. Иначе добавляем в конец.
-        if block_pattern.search(content):
-            logger.debug("Найден существующий блок конфигурации. Заменяем его.")
-            final_content = block_pattern.sub(new_block, content)
-        else:
-            logger.debug("Блок конфигурации не найден. Добавляем новый в конец файла.")
-            # Убедимся, что перед нашим блоком есть перенос строки
-            if content and not content.endswith('\n'):
-                content += '\n'
-            final_content = content + "\n" + new_block
-        
+            # Обновляем блок ssl_bump
+            content = _replace_or_add_block(
+                content,
+                SSL_BLOCK_HEADER,
+                SSL_BLOCK_FOOTER,
+                ssl_lines,
+                "ssl_bump",
+            )
+
+            # Обновляем блок http_port
+            cert_dir = filepath.parent
+            content = update_http_port_block(content, args.squid_port, cert_dir)
+
+        # Первая запись файла (основная конфигурация)
+        filepath.write_text(content, encoding="utf-8")
+        logger.debug("Записана основная конфигурация.")
+
+        # 3. Проверка конфигурации через squid -k parse (только если есть ssl_lines)
         if ssl_lines:
-            block_pattern = re.compile(f"s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}s*?", re.DOTALL)
-            if block_pattern.search(final_content):
-                logger.debug("Найден существующий блок конфигурации ssl_bump. Заменяем его.")
-                final_content = block_pattern.sub(ssl_block, final_content)
-            else:
-                logger.debug("Блок конфигурации ssl_bump не найден. Добавляем новый в конец файла.")
-                # Убедимся, что перед нашим блоком есть перенос строки
-                if final_content and not final_content.endswith('\n'):
-                    final_content += '\n'
-                final_content = final_content + "\n" + ssl_block
-
-            logger.debug("Добавляем настройки порта...")
-
-            # Закоментируем текущие настройки порта
-            current_port_pattern = re.compile(f"^http_port.*{args.squid_port}")
-            content = final_content.split("\n")
-            for num_line, line in enumerate(content):
-                if re.search(current_port_pattern, line):
-                    content[num_line] = "#drweb " + line
-            final_content = "\n".join(content)
-            block_pattern = re.compile(f"s*?{re.escape(SSL_PORT_HEADER)}.*?{re.escape(SSL_PORT_FOOTER)}s*?", re.DOTALL)
-            http_port_line = f"http_port {args.squid_port} tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB tls-cert={str(filepath.parent)}/ssl/squid.pem tls-key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-            logger.debug(http_port_line)
-            http_port_block = [f"\n{SSL_PORT_HEADER}\n"]
-            http_port_block.append(f"{http_port_line}\n")
-            http_port_block.append(f"{SSL_PORT_FOOTER}")
-            if block_pattern.search(final_content):
-                logger.debug("Найден существующий блок конфигурации http_port. Заменяем его.")
-                final_content = block_pattern.sub("".join(http_port_block), final_content)
-            else:
-                logger.debug("Блок конфигурации http_port не найден. Добавляем новый.")
-                # Убедимся, что перед нашим блоком есть перенос строки
-                pattern_one = r"^http_port.*"
-                pattern_two = r"^#http_port.*"
-                final_content = final_content.split("\n")
-                for line_num, line in enumerate(final_content):
-                    if re.search(pattern_one, line) or re.search(pattern_two, line):
-                        final_content = final_content[:line_num+1] + http_port_block + final_content[line_num+1:]
-                        final_content = "\n".join(final_content)
-                        logger.debug(final_content)
-                        break
-                else:
-                    final_content = "\n".join(final_content)
-                    final_content = final_content + "\n" + "".join(http_port_block)
-            # final_content = re.sub(pattern, replacement, final_content, flags=re.MULTILINE)
-            logger.debug("Записываем новую конфигурацию в файл...")
-            filepath.write_text(final_content, encoding='utf-8')
-            logger.success("Запись сделана")
             logger.debug("Проверка конфигурации...")
-            output = subprocess.run(
-                    ["squid", "-k", "parse"], capture_output=True, text=True, check=False, timeout=300
+            try:
+                result = subprocess.run(
+                    ["squid", "-k", "parse"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=300,
                 )
-            if output.stderr.strip():
-                logger.debug("Настройки порта выдали ошибку. Пробуем другую конфигурацию...")
-                pattern = r"^http_port.*tls-cert.*\n$"
-                http_port_line = f"http_port {args.squid_port} tcpkeepalive=60,30,3 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=20MB cert={str(filepath.parent)}/ssl/squid.pem key={str(filepath.parent)}/ssl/squid.key cipher=HIGH:MEDIUM:!LOW:!RC4:!SEED:!IDEA:!3DES:!MD5:!EXP:!PSK:!DSS options=NO_TLSv1,NO_SSLv3"
-                final_content = re.sub(pattern, http_port_line, final_content, flags=re.MULTILINE)        
-        filepath.write_text(final_content, encoding='utf-8')
+                if result.stderr.strip():
+                    logger.debug("Настройки порта выдали ошибку. Пробуем другую конфигурацию...")
+                    # Заменяем tls-cert на cert в строке http_port внутри блока
+                    cert_dir = filepath.parent
+                    fallback_line = build_http_port_line(args.squid_port, cert_dir, use_tls_cert=False)
+                    # Находим и заменяем строку внутри блока
+                    pattern = r"^http_port.*tls-cert.*\n$"
+                    content = re.sub(pattern, fallback_line + "\n", content, flags=re.MULTILINE)
+                    # Перезаписываем файл с исправленной строкой
+                    filepath.write_text(content, encoding="utf-8")
+                    logger.debug("Конфигурация обновлена с параметром 'cert'.")
+            except subprocess.TimeoutExpired:
+                logger.error("Проверка squid -k parse превысила таймаут.")
+            except FileNotFoundError:
+                logger.error("Команда 'squid' не найдена. Проверка конфигурации пропущена.")
+
         logger.success(f"[+] Файл '{filepath.name}' успешно обновлен.")
+
     except Exception:
         logger.error("Произошла ошибка при обновлении конфигурации squid.")
         import traceback
@@ -445,33 +530,27 @@ def get_ssl_lines():
     """
     Создает строки конфига squid для работы ssl_bump.
     """
-    try:
-        if os.path.isfile("/usr/sbin/ssl_crtd"):
-            cmd = "/usr/sbin/ssl_crtd"
-        elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
-            cmd = "/usr/lib/squid/security_file_certgen"
-        elif os.path.isfile("/usr/lib64/squid/security_file_certgen"):
-            cmd = "/usr/lib64/squid/security_file_certgen"
-        elif os.path.isfile("/usr/lib/squid/ssl_crtd"):
-            cmd = "/usr/lib/squid/ssl_crtd"
-        elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
-            cmd = "/usr/lib64/squid/ssl_crtd"
-        elif os.path.isfile("/lib/squid/ssl_crtd"):
-            cmd = "/lib/squid/ssl_crtd"
-        elif os.path.isfile("/lib64/squid/ssl_crtd"):
-            cmd = "/lib64/squid/ssl_crtd"
-        elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
-            cmd = "/usr/local/libexec/squid/security_file_certgen"
-        ssl_lines = [f"sslcrtd_program {cmd} -s /usr/local/squid/var/lib/ssl_db -M 20MB",
+    cmds =  ["/usr/sbin/ssl_crtd",
+             "/usr/lib/squid/security_file_certgen",
+             "/usr/lib64/squid/security_file_certgen",
+             "/usr/lib/squid/ssl_crtd",
+             "/usr/lib64/squid/ssl_crtd",
+             "/lib/squid/ssl_crtd",
+             "/lib64/squid/ssl_crtd",
+             "/usr/local/libexec/squid/security_file_certgen",
+             ]
+    cmd = [cmd for cmd in cmds if os.path.isfile(cmd)]
+    if cmd:
+        ssl_lines = [f"sslcrtd_program {cmd[0]} -s /usr/local/squid/var/lib/ssl_db -M 20MB",
                     "sslproxy_cert_error allow all",
                     "ssl_bump stare all"]
         return ssl_lines
-    except:
+    else:
         logger.warning("Не получилось определить необходимый конфиг для ssl-bump.")
         return
 
 
-def handle_setup(args, squid_config_dir: Path, version: str, mode: bool):
+def handle_setup(args, squid_config_dir: Path, version: int, mode: bool):
     """
     Обрабатывает команду 'setup'.
 
