@@ -578,7 +578,7 @@ def handle_setup(args, squid_config_dir: Path, version: int, mode: bool):
     update_squid_config_file(main_cf_path, main_cf_lines, ssl_lines, args)
 
 
-def add_certificate_to_trusted(cert_path: Path):
+def add_certificate_to_trusted(cert_path):
     """
     Добавляет SSL сертификат в список доверенных сертификатов системы
 
@@ -592,7 +592,7 @@ def add_certificate_to_trusted(cert_path: Path):
             run_shell_command(["certctl", "rehash"])
             return
         else:
-            cmds = ["c_rehash", "update-ca-certificates", "update-ca-trust"]
+            cmds = ["update-ca-certificates", "update-ca-trust", "c_rehash"]
             for cmd in cmds:
                 try:
                     run_shell_command(["which", cmd])
@@ -616,6 +616,7 @@ def add_certificate_to_trusted(cert_path: Path):
     except Exception:
         logger.warning(f"Не получилось добавить созданный сертификат в список доверенных. \nПожалуйста сделайте это сами. Путь к сертификату {cert_path}")
         return
+
 
 
 def generate_certificate(squid_dir_path: Path):
@@ -645,37 +646,31 @@ def prepare_ssl_db():
     Создает базу данных SSL сертификатов для работы squid в режиму ssl_bump 
     """
     try:
-        if os.path.isfile("/usr/sbin/ssl_crtd"):
-            cmd = "/usr/sbin/ssl_crtd"
-        elif os.path.isfile("/usr/lib/squid/security_file_certgen"):
-            cmd = "/usr/lib/squid/security_file_certgen"
-        elif os.path.isfile("/usr/lib64/squid/security_file_certgen"):
-            cmd = "/usr/lib64/squid/security_file_certgen"
-        elif os.path.isfile("/usr/lib/squid/ssl_crtd"):
-            cmd = "/usr/lib/squid/ssl_crtd"
-        elif os.path.isfile("/usr/lib64/squid/ssl_crtd"):
-            cmd = "/usr/lib64/squid/ssl_crtd"
-        elif os.path.isfile("/lib/squid/ssl_crtd"):
-            cmd = "/lib/squid/ssl_crtd"
-        elif os.path.isfile("/lib64/squid/ssl_crtd"):
-            cmd = "/lib64/squid/ssl_crtd"
-        elif os.path.isfile("/usr/local/libexec/squid/security_file_certgen"):
-            cmd = "/usr/local/libexec/squid/security_file_certgen"
-        
-        #Определить пользователя и группу squid(может быть proxy или squid)
-        try:
-            output = run_shell_command(["id", "proxy"])
-        except Exception:
-            output = "error"
-        if "uid" in output:
-            user = "proxy"
-        else:
-            user = "squid"
-        run_shell_command(["mkdir", "-p", "/usr/local/squid/var/lib/"])
-        run_shell_command(["rm", "-rf", "/usr/local/squid/var/lib/ssl_db"])
-        run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid/var/lib/"])
-        run_shell_command([cmd, "-c", "-s", "/usr/local/squid/var/lib/ssl_db", "-M", "20MB"])
-        run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid"])
+        cmds =  ["/usr/sbin/ssl_crtd",
+                "/usr/lib/squid/security_file_certgen",
+                "/usr/lib64/squid/security_file_certgen",
+                "/usr/lib/squid/ssl_crtd",
+                "/usr/lib64/squid/ssl_crtd",
+                "/lib/squid/ssl_crtd",
+                "/lib64/squid/ssl_crtd",
+                "/usr/local/libexec/squid/security_file_certgen",
+                ]
+        cmd = [cmd for cmd in cmds if os.path.isfile(cmd)]
+        if cmd:
+            #Определить пользователя и группу squid(может быть proxy или squid)
+            try:
+                output = run_shell_command(["id", "proxy"])
+            except Exception:
+                output = ""
+            if "uid" in output:
+                user = "proxy"
+            else:
+                user = "squid"
+            run_shell_command(["mkdir", "-p", "/usr/local/squid/var/lib/"])
+            run_shell_command(["rm", "-rf", "/usr/local/squid/var/lib/ssl_db"])
+            run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid/var/lib/"])
+            run_shell_command([cmd[0], "-c", "-s", "/usr/local/squid/var/lib/ssl_db", "-M", "20MB"])
+            run_shell_command(["chown", "-R", f"{user}:{user}", "/usr/local/squid"])
     except Exception:
         logger.warning(f"Не получилось подготовить базу данных SSL сертификатов. Пожалуйста подготовьте ее самостоятельно.")
         return
