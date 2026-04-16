@@ -694,72 +694,81 @@ def create_backup(filepath: Path):
         logger.warning(f"ПРЕДУПРЕЖДЕНИЕ: Не удалось создать резервную копию для '{filepath}': {e}")
 
 
-def remove_squid_config_block(filepath: Path, with_ssl:bool):
+def remove_block(content: str, header: str, footer: str, block_name: str) -> tuple[str, bool]:
     """
-    Безопасно удаляет блок конфигурации Dr.Web из файла Squid.
+    Удаляет блок конфигурации между header и footer, если он присутствует.
 
-    Функция находит и удаляет блок, обрамленный маркерами.
-    Если блок не найден, никаких действий не производится.
+    :param content: Исходное содержимое файла
+    :param header: Маркер начала блока
+    :param footer: Маркер конца блока
+    :param block_name: Имя блока для логирования
+    :return: (новое содержимое, был ли блок удалён)
+    """
+    pattern = re.compile(rf"\s*?{re.escape(header)}.*?{re.escape(footer)}\s*?", re.DOTALL)
+    if pattern.search(content):
+        logger.debug(f"Найден блок конфигурации '{block_name}'. Удаляем его.")
+        new_content = pattern.sub('', content).strip()
+        # Добавляем один перенос строки в конце, если содержимое не пусто
+        if new_content:
+            new_content += '\n'
+        logger.success(f"[+] Блок конфигурации '{block_name}' успешно удален.")
+        return new_content, True
+    else:
+        logger.info(f"[*] Блок конфигурации '{block_name}' не найден. Действий не требуется.")
+        return content, False
 
-    :param filepath: Путь к файлу (squid.conf).
+
+def uncomment_drweb_http_port(content: str) -> str:
+    """
+    Восстанавливает оригинальные строки http_port, закомментированные Dr.Web.
+    Убирает префикс '#drweb ' из строк, начинающихся с '#drweb http_port'.
+    """
+    # Ищем строки, где после "#drweb " идёт "http_port"
+    pattern = re.compile(r"^#drweb (http_port.*)$", re.MULTILINE)
+    return pattern.sub(r"\1", content)
+
+
+def remove_squid_config_block(filepath: Path, with_ssl: bool) -> None:
+    """
+    Безопасно удаляет блоки конфигурации Dr.Web из файла Squid.
+
+    Функция находит и удаляет основной блок, обрамленный маркерами,
+    а также, если with_ssl=True, блоки ssl_bump и http_port,
+    и восстанавливает закомментированные строки http_port.
+
+    :param filepath: Путь к файлу `squid.conf`.
+    :param with_ssl: Флаг, указывающий, нужно ли удалять SSL-блоки.
     """
     if not filepath.exists():
-        logger.debug(f"Файл '{filepath}' не существует, пропуск удаления блока.")
+        logger.debug(f"Файл '{filepath}' не существует, пропуск удаления блоков.")
         return
 
-    logger.debug(f"Проверка файла '{filepath}' на наличие блока для удаления...")
+    logger.debug(f"Проверка файла '{filepath}' на наличие блоков Dr.Web...")
     create_backup(filepath)
     content = filepath.read_text(encoding='utf-8', errors='ignore')
 
-    # Регулярное выражение для поиска нашего блока (включая окружающие пробелы и переносы)
-    block_pattern = re.compile(f"\\s*?{re.escape(BLOCK_HEADER)}.*?{re.escape(BLOCK_FOOTER)}\\s*?", re.DOTALL)
-    final_content = ""
-    if block_pattern.search(content):
-        logger.debug("Найден блок конфигурации. Удаляем его.")
-        # Заменяем найденный блок на пустую строку
-        final_content = block_pattern.sub('', content).strip()
-        # Добавляем один перенос строки в конце, если файл не пустой
-        if final_content:
-            final_content += '\n'
-        logger.success(f"[+] Блок конфигурации Dr.Web успешно удален из '{filepath.name}'.")
-    else:
-        logger.info(f"[*] Блок конфигурации Dr.Web не найден в '{filepath.name}'. Действий не требуется.")
+    # 1. Удаляем основной блок конфигурации
+    content, removed_main = remove_block(content, BLOCK_HEADER, BLOCK_FOOTER, "основной")
 
-
+    # 2. Если требуется, удаляем SSL-блоки
     if with_ssl:
-        if final_content:
-            content = final_content
-        block_pattern = re.compile(f"\\s*?{re.escape(SSL_BLOCK_HEADER)}.*?{re.escape(SSL_BLOCK_FOOTER)}\\s*?", re.DOTALL)
-        if block_pattern.search(content):
-            logger.debug("Найден блок конфигурации ssl_bump. Удаляем его.")
-            # Заменяем найденный блок на пустую строку
-            final_content = block_pattern.sub('', content).strip()
-            # Добавляем один перенос строки в конце, если файл не пустой
-            if content:
-                final_content += '\n'
-            logger.success(f"[+] Блок конфигурации ssl_bump успешно удален из '{filepath.name}'.")
-        else:
-            logger.info(f"[*] Блок конфигурации ssl_bump не найден в '{filepath.name}'. Действий не требуется.")
-    
-        if final_content:
-            content = final_content
+        # Удаляем блок ssl_bump
+        content, _ = remove_block(content, SSL_BLOCK_HEADER, SSL_BLOCK_FOOTER, "ssl_bump")
 
-        pattern = re.compile("#drweb http_port")
-        if pattern.search(content):
-            content = pattern.sub("http_port",content)
-        
-        block_pattern = re.compile(f"s*?{re.escape(SSL_PORT_HEADER)}.*?{re.escape(SSL_PORT_FOOTER)}s*?", re.DOTALL)
+        # Удаляем блок http_port (с настройками порта)
+        content, _ = remove_block(content, SSL_PORT_HEADER, SSL_PORT_FOOTER, "http_port")
 
-        if block_pattern.search(content):
-            logger.debug("Найден блок конфигурации http_port. Удаляем его.")
-            final_content = block_pattern.sub("", content)
-            logger.success(f"[+] Блок конфигурации http_port успешно удален.")
-        else:
-            logger.info(f"[*] Блок конфигурации http_port не найден в '{filepath.name}'. Действий не требуется.")
-    
-    if final_content:
-        filepath.write_text(final_content, encoding='utf-8')
-    return
+        # Восстанавливаем оригинальные строки http_port (убираем комментарий Dr.Web)
+        content = uncomment_drweb_http_port(content)
+        logger.debug("Строки http_port восстановлены (удалён комментарий '#drweb').")
+
+    # Если после всех удалений содержимое изменилось, записываем файл
+    # (если ни один блок не был удалён, content остался исходным, и запись не требуется)
+    if removed_main or (with_ssl and content != filepath.read_text(encoding='utf-8', errors='ignore')):
+        filepath.write_text(content, encoding='utf-8')
+        logger.success(f"[+] Конфигурация Dr.Web успешно удалена из '{filepath.name}'.")
+    else:
+        logger.info(f"[*] В файле '{filepath.name}' не найдено блоков Dr.Web для удаления.")
 
 
 def handle_remove(args, squid_config_dir: Path):
