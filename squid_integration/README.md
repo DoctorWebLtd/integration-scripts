@@ -12,28 +12,6 @@
 
 ---
 
-### 📥 Установка
-
-Скрипты не требуют установки внешних Python-библиотек и готовы к работе "из коробки".
-Поддерживаемая версия Python 3.9+
-
-1.  **Разместите файл:**
-
-    Скопируйте файл `drweb_squid_integration`.
-
-2.  **Сделайте его исполняемым:**
-
-    Откройте терминал и выполните команду:
-
-    ```bash
-    chmod +x drweb_squid_integration
-    ```
-
-После этого скрипт готов к использованию.
-
----
-
-
 ### 💡 Примеры применения
 
 Команды настройки (`setup`) и удаления (`remove`) требуют прав суперпользователя (`sudo`) для изменения конфигурационных файлов и перезапуска служб.
@@ -43,7 +21,7 @@
 Чтобы увидеть все доступные команды и параметры, выполните:
 
 ```bash
-  ./drweb_squid_integration -h
+  python3 drweb_squid_integration.py -h
 ```
 
 #### **Автоматическая настройка**
@@ -51,25 +29,25 @@
 Настройка интеграции Dr.Web ICAPD c прокси-сервером Squid с настройками по умолчанию.
 
 ```bash
-  sudo ./drweb_squid_integration setup
+  sudo python3 drweb_squid_integration.py setup
 ```
 
 Настройка интеграции Dr.Web ICAPD c прокси-сервером Squid с настройкой разбора HTTPS трафика.
 
 ```bash
-  sudo ./drweb_squid_integration setup --with-ssl
+  sudo python3 drweb_squid_integration.py setup --with-ssl
 ```
 
 Вы также можете указать нестандартный сокет ICAPD:
 
 ```bash
-  sudo ./drweb_squid_integration setup --icapd-port 127.0.0.1 --icapd-host 1345 
+  sudo python3 drweb_squid_integration.py setup --icapd-host 127.0.0.1 --icapd-port 1345 
 ```
 
 Также вы можете указать нестандартный порт Squid
 
 ```bash
-  sudo ./drweb_squid_integration setup --squid-port 3129 
+  sudo python3 drweb_squid_integration.py setup --squid-port 3129 
 ```
 
 
@@ -78,7 +56,7 @@
 Если что-то идет не так, используйте режим отладки (`-d`) для максимально подробного вывода и сохраните весь процесс в лог-файл (`-l`).
 
 ```bash
-  sudo ./drweb_squid_integration setup -d -l /var/log/drweb_squid_integration.log
+  sudo python3 drweb_squid_integration.py setup -d -l /var/log/drweb_squid_integration.log
 ```
 
 #### **Явное указание директории Squid**
@@ -86,27 +64,27 @@
 Если скрипт не может автоматически найти директорию Squid, вы можете указать путь вручную:
 
 ```bash
-  sudo ./drweb_squid_integration setup --squid-config-dir /etc/squid
+  sudo python3 drweb_squid_integration.py setup --squid-config-dir /etc/squid
 ```
 
-### **Удаление интеграции**
+#### **Удаление интеграции**
 
 Команда удалит конфигурационный блок интеграции Squid и ICAPD из файла `squid.conf`.
 
 ```bash
-  sudo ./drweb_squid_integration remove
+  sudo python3 drweb_squid_integration.py remove
 ```
 
 Удаление ранее сделанных настроек, в том числе расшифровку HTTPS трафика".
 
 ```bash
-  sudo ./%(prog)s remove --with-ssl
+  sudo python3 drweb_squid_integration.py remove --with-ssl
 ```
 
 Для автоматического выполнения без запроса подтверждения добавьте флаг `-y`:
 
 ```bash
-  sudo ./drweb_squid_integration remove -y
+  sudo python3 drweb_squid_integration.py remove -y
 ```
 
 ---
