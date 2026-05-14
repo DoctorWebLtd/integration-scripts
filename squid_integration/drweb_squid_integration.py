@@ -1047,6 +1047,10 @@ def main():
         parents=[base_parser, interactive_parser],
         help="Удаление ранее сделанных настроек.",
     )
+
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        sys.exit(2)
     args = parser.parse_args()
 
     logger.reconfigure(
