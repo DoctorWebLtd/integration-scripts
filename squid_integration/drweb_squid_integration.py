@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 import traceback
 
 
@@ -612,9 +612,9 @@ def get_ssl_lines():
     cmd = [cmd for cmd in cmds if os.path.isfile(cmd)]
     if cmd:
         ssl_lines = [
-            f"sslcrtd_program {cmd[0]} -s /usr/local/squid/var/lib/ssl_db -M 20MB",
+            f"\nsslcrtd_program {cmd[0]} -s /usr/local/squid/var/lib/ssl_db -M 20MB",
             "sslproxy_cert_error allow all",
-            "ssl_bump stare all",
+            "ssl_bump stare all\n",
         ]
         return ssl_lines
 
@@ -808,7 +808,7 @@ def create_backup(filepath: Path):
 
 def remove_block(
     content: str, header: str, footer: str, block_name: str
-) -> tuple[str, bool]:
+) -> Tuple[str, bool]:
     """
     Удаляет блок конфигурации между header и footer, если он присутствует.
 
