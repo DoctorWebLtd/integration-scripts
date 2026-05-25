@@ -524,7 +524,7 @@ def update_squid_config_file(
 
         # 1. Обновление основного блока конфигурации
         content = _replace_or_add_block(
-            content,
+            content + "\n",
             BLOCK_HEADER,
             BLOCK_FOOTER,
             new_lines,
@@ -535,7 +535,7 @@ def update_squid_config_file(
         if ssl_lines:
             # Обновляем блок ssl_bump
             content = _replace_or_add_block(
-                content,
+                content + "\n",
                 SSL_BLOCK_HEADER,
                 SSL_BLOCK_FOOTER,
                 ssl_lines,
